@@ -125,7 +125,8 @@ jobs:
               raise SystemExit(1)
 
           stage = Path.cwd()
-          extracted = Path(sys.argv[1])
+          # LibOrbisPkg's pkg_extract preserves its internal /uroot directory.
+          extracted = Path(sys.argv[1]) / 'uroot'
           entries = [e.get('targ_path') for e in ET.parse(stage / 'pkg.gp4').findall('./files/file')]
           if not entries:
               fail('No payloads in GP4')
