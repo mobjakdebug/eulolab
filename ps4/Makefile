@@ -15,6 +15,7 @@ STAGE := $(OUT)/stage
 CONTENT_ID := IV0000-BREW00242_00-EULOROCKETLAB001
 SRC := core/rocket.cpp core/motor.cpp core/flight.cpp ui/canvas.cpp ui/rocket_view.cpp ui/app.cpp platform/ps4.cpp
 OBJ := $(addprefix $(OUT)/obj/,$(SRC:.cpp=.o))
+HEADERS := $(wildcard $(ROOT)/src/core/*.hpp $(ROOT)/src/ui/*.hpp) $(ROOT)/ps4/include/libusb.h
 # The SDK's libc++ expects musl's BSD and XOPEN declarations (nanosleep and
 # vasprintf); gnu++17 retains the feature macros that its own samples use.
 FLAGS := --target=x86_64-pc-freebsd12-elf -std=gnu++17 \
@@ -25,7 +26,7 @@ LIBS := -lc -lkernel -lc++ -lSceVideoOut -lScePad -lSceUserService -lSceSysmodul
 
 eboot: $(OUT)/eboot.bin
 
-$(OUT)/obj/%.o: $(ROOT)/src/%.cpp
+$(OUT)/obj/%.o: $(ROOT)/src/%.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
 	$(CLANG) $(FLAGS) -c $< -o $@
 
@@ -61,7 +62,7 @@ $(STAGE)/sce_sys/about/right.sprx: $(SDK)/samples/piglet/sce_sys/about/right.spr
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(STAGE)/sce_sys/param.sfo:
+$(STAGE)/sce_sys/param.sfo: Makefile
 	@mkdir -p $(dir $@)
 	$(PKGTOOL) sfo_new $@
 	$(PKGTOOL) sfo_setentry $@ APP_TYPE --type Integer --maxsize 4 --value 1
@@ -75,9 +76,10 @@ $(STAGE)/sce_sys/param.sfo:
 	$(PKGTOOL) sfo_setentry $@ TITLE_ID --type Utf8 --maxsize 12 --value BREW00242
 	$(PKGTOOL) sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value 1.00
 
-$(STAGE)/pkg.gp4: $(STAGE)/eboot.bin $(STAGE)/sce_sys/param.sfo $(STAGE)/sce_sys/icon0.png $(STAGE)/sce_sys/about/right.sprx $(STAGE)/assets/font-atlas.bin $(STAGE)/assets/OFL.txt $(STAGE)/assets/motors/Klima_C6.eng $(STAGE)/assets/motors/Klima_D9.eng
+$(STAGE)/pkg.gp4: Makefile $(ROOT)/tools/repair_gp4.py $(STAGE)/eboot.bin $(STAGE)/sce_sys/param.sfo $(STAGE)/sce_sys/icon0.png $(STAGE)/sce_sys/about/right.sprx $(STAGE)/assets/font-atlas.bin $(STAGE)/assets/OFL.txt $(STAGE)/assets/motors/Klima_C6.eng $(STAGE)/assets/motors/Klima_D9.eng
 	cd $(STAGE) && $(GP4) -out pkg.gp4 --content-id=$(CONTENT_ID) \
 	  --files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/about/right.sprx assets/font-atlas.bin assets/OFL.txt assets/motors/Klima_C6.eng assets/motors/Klima_D9.eng"
+	python3 $(ROOT)/tools/repair_gp4.py $@ $(STAGE)
 
 pkg: $(STAGE)/pkg.gp4
 	cd $(STAGE) && $(PKGTOOL) pkg_build pkg.gp4 .

@@ -76,6 +76,9 @@ int main() {
     assert(c6.totalImpulse()>7 && c6.totalImpulse()<11);
     assert(d9.totalImpulse()>15 && d9.totalImpulse()<22);
     auto flight = simulate(rocket,c6);
+    const auto full=massProperties(rocket,c6.loadedKg,c6.propellantKg);
+    const auto spent=massProperties(rocket,c6.loadedKg-c6.propellantKg,0);
+    assert(spent.cgFromTail>full.cgFromTail && near(spent.dry,full.dry));
     assert(flight.valid && flight.apogee > 20 && flight.apogee < 3000);
     assert(flight.apogeeTime > c6.burnTime() && flight.maxG > 1 && flight.samples.size() > 40);
     assert(flight.landed && flight.maxQ > 0 && flight.touchdownSpeed > 0);

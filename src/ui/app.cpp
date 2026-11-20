@@ -322,8 +322,9 @@ void App::drawInspector(Canvas& c,double now) const {
         field(c,x+15,y+261,w-30,"MOTOR THRUST / .ENG",fmt("%.1f N",s.thrust),false);
         smallLabel(c,x+20,y+350,"MODEL APOGEE",soft);
         heading(c,x+19,y+369,fmt("%.0f m",flight_.apogee),cyan);
-        smallLabel(c,x+20,y+448,rocket_.parachuteDiameter>0?
-            "IDEAL CANOPY / NO WIND":"NO CANOPY / NO WIND",orange);
+        smallLabel(c,x+20,y+417,"MODEL / NOT FLIGHT RATED",orange);
+        smallLabel(c,x+20,y+446,rocket_.parachuteDiameter>0?
+            "IDEAL CANOPY / NO WIND":"NO CANOPY / NO WIND",soft);
     } else {
         smallLabel(c,x+18,y+16,"GROUND STATION / USB",orange);
         heading(c,x+16,y+48,"TELEMETRY",ink);
@@ -380,11 +381,15 @@ void App::draw(Canvas& c,double now) const {
     drawChrome(c);
     if(page_==Page::Home) drawHome(c);
     else {
-        const MassProperties mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
+        const auto sample=flight_.at(simTime_);
+        const bool inFlight=page_==Page::Flight && flight_.valid;
+        const double remaining=inFlight?std::clamp(sample.propellantRemaining,0.0,motor().propellantKg):
+            motor().propellantKg;
+        const double motorMass=motor().loadedKg-(motor().propellantKg-remaining);
+        const MassProperties mass=massProperties(rocket_,motorMass,remaining);
         RocketView view;
         view.x=276;view.y=102;view.w=624;view.h=482;
-        view.flight=page_==Page::Flight;
-        const auto sample=flight_.at(simTime_);
+        view.flight=inFlight;
         view.altitude=view.flight?sample.altitude:0;
         view.thrust=view.flight?sample.thrust:0;
         view.canopyOpen=view.flight && rocket_.parachuteDiameter>0 &&
