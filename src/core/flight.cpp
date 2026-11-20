@@ -35,7 +35,7 @@ FlightResult simulate(const Rocket& rocket, const MotorCurve& motor, double init
         const double rho = seaLevelRho * std::exp(-std::max(0.0, state.h) / scaleHeight);
         const double dragArea = airframeCd * airframeArea + (canopyOpen ? canopyCd * canopyArea : 0.0);
         const double thrust = motor.thrust(t);
-        const double drag = -0.5 * rho * dragArea * state.v * std::abs(state.v);
+        const double drag = -0.5 * rho * dragArea * state.v * std::fabs(state.v);
         return {(thrust + drag) / (mass.dry + remaining) - g, thrust, rho, remaining};
     };
     auto acceleration = [&](double t, State state, bool canopyOpen) {
@@ -45,7 +45,7 @@ FlightResult simulate(const Rocket& rocket, const MotorCurve& motor, double init
         const Forces f = forces(t,state,canopyOpen);
         double a = f.acceleration;
         if (state.h <= 0 && state.v <= 0 && a <= 0) a = 0; // launch rail / ground
-        return {t, state.h, state.v, a, f.thrust, std::abs(a + g) / g,
+        return {t, state.h, state.v, a, f.thrust, std::fabs(a + g) / g,
             0.5 * f.rho * state.v * state.v, f.remaining};
     };
     State s{initialAltitude, 0.0};
@@ -62,7 +62,7 @@ FlightResult simulate(const Rocket& rocket, const MotorCurve& motor, double init
         const FlightSample current = sample(t,s,canopyOpen);
         if (i % 5 == 0 || i == 30000) out.samples.push_back(current);
         if (s.h > out.apogee) { out.apogee = s.h; out.apogeeTime = t; }
-        out.maxSpeed = std::max(out.maxSpeed,std::abs(s.v));
+        out.maxSpeed = std::max(out.maxSpeed,std::fabs(s.v));
         out.maxG = std::max(out.maxG,current.properG);
         out.maxQ = std::max(out.maxQ,current.dynamicPressure);
         if (!airborne && t > motor.burnTime() + 0.5) break;
@@ -91,7 +91,7 @@ FlightResult simulate(const Rocket& rocket, const MotorCurve& motor, double init
         if (next.h <= 0 && airborne) {
             const double fraction = std::clamp(s.h/(s.h-next.h),0.0,1.0);
             const double touchdown = t+stepSeconds*fraction;
-            out.touchdownSpeed = std::abs(s.v+(next.v-s.v)*fraction);
+            out.touchdownSpeed = std::fabs(s.v+(next.v-s.v)*fraction);
             out.maxSpeed = std::max(out.maxSpeed,out.touchdownSpeed);
             out.landed = true;
             out.samples.push_back(sample(touchdown,{0,0},canopyOpen));
