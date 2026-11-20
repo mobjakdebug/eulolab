@@ -41,6 +41,10 @@ $(STAGE)/assets/font-atlas.bin: $(ROOT)/assets/font-atlas.bin
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+$(STAGE)/assets/OFL.txt: $(ROOT)/assets/OFL.txt
+	@mkdir -p $(dir $@)
+	cp $< $@
+
 $(STAGE)/assets/motors/%.eng: $(ROOT)/assets/motors/%.eng
 	@mkdir -p $(dir $@)
 	cp $< $@
@@ -68,9 +72,9 @@ $(STAGE)/sce_sys/param.sfo:
 	$(PKGTOOL) sfo_setentry $@ TITLE_ID --type Utf8 --maxsize 12 --value BREW00242
 	$(PKGTOOL) sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value 1.00
 
-$(STAGE)/pkg.gp4: $(STAGE)/eboot.bin $(STAGE)/sce_sys/param.sfo $(STAGE)/sce_sys/icon0.png $(STAGE)/sce_sys/about/right.sprx $(STAGE)/assets/font-atlas.bin $(STAGE)/assets/motors/Klima_C6.eng $(STAGE)/assets/motors/Klima_D9.eng
+$(STAGE)/pkg.gp4: $(STAGE)/eboot.bin $(STAGE)/sce_sys/param.sfo $(STAGE)/sce_sys/icon0.png $(STAGE)/sce_sys/about/right.sprx $(STAGE)/assets/font-atlas.bin $(STAGE)/assets/OFL.txt $(STAGE)/assets/motors/Klima_C6.eng $(STAGE)/assets/motors/Klima_D9.eng
 	cd $(STAGE) && $(GP4) -out pkg.gp4 --content-id=$(CONTENT_ID) \
-	  --files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/about/right.sprx assets/font-atlas.bin assets/motors/Klima_C6.eng assets/motors/Klima_D9.eng"
+	  --files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/about/right.sprx assets/font-atlas.bin assets/OFL.txt assets/motors/Klima_C6.eng assets/motors/Klima_D9.eng"
 
 pkg: $(STAGE)/pkg.gp4
 	cd $(STAGE) && $(PKGTOOL) pkg_build pkg.gp4 .

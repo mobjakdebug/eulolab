@@ -331,7 +331,7 @@ void App::drawInspector(Canvas& c,double now) const {
         smallLabel(c,x+18,y+310,"Simulation is never displayed",soft);
         smallLabel(c,x+18,y+335,"as measured telemetry.",soft);
         c.roundRect(x+15,y+417,w-30,45,7,rgb(25,49,49));
-        smallLabel(c,x+31,y+428,"READ-ONLY / NO ACTUATION",cyan);
+        smallLabel(c,x+31,y+428,"DISCOVERY ONLY / NO WRITE",cyan);
     }
 }
 
