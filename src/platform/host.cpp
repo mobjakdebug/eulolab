@@ -1,6 +1,7 @@
 // Host renderer of the exact C++ UI and physics core used in the PS4 build.
 // It has no browser runtime and never claims to emulate the Orbis hardware.
 #include "ui/app.hpp"
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,9 +13,36 @@ int main(int argc, char** argv) {
     if(!app.init("assets/font-atlas.bin","assets/motors","out/project.ini")) {
         std::fprintf(stderr,"Cannot load font atlas or commercial .eng curves\n");return 1;
     }
+    app.setRuntimeLabel("HOST PREVIEW / NOT PS4");
+    app.setUsbStatus("USB unavailable in host preview");
     constexpr int width=1280,height=720;
     std::vector<uint32_t> pixels(static_cast<size_t>(width)*height);
     eulo::Canvas canvas(pixels.data(),width,height,app.font());
+    // A minimal command pipe for the local preview server: input events go to
+    // the actual shared C++ App, which returns its native framebuffer. No UI
+    // or simulation logic is reimplemented in JavaScript or in the server.
+    if(argc>1 && std::strcmp(argv[1],"--interactive")==0) {
+        char line[256];
+        while(std::fgets(line,sizeof(line),stdin)) {
+            int x=0,y=0,delta=0,ctrl=0,shift=0;
+            char name[48]={};double elapsed=0;
+            if(std::strcmp(line,"FRAME\n")==0) {
+                app.draw(canvas,0);
+                if(std::fwrite(pixels.data(),sizeof(uint32_t),pixels.size(),stdout)!=pixels.size() ||
+                   std::fflush(stdout)!=0)return 3;
+            } else if(std::sscanf(line,"CLICK %d %d",&x,&y)==2)app.click(x,y);
+            else if(std::sscanf(line,"HOVER %d %d",&x,&y)==2)app.hover(x,y);
+            else if(std::sscanf(line,"DRAG %d %d",&x,&y)==2)
+                app.orbit(x*0.004,y*0.004);
+            else if(std::sscanf(line,"WHEEL %d %d %d",&x,&y,&delta)==3)
+                app.wheel(x,y,delta);
+            else if(std::sscanf(line,"TICK %lf",&elapsed)==1 && std::isfinite(elapsed))
+                app.tick(elapsed);
+            else if(std::sscanf(line,"KEY %47s %d %d",name,&ctrl,&shift)==3)
+                app.key(name,ctrl!=0,shift!=0);
+        }
+        return 0;
+    }
     if(argc>1 && std::strcmp(argv[1],"--demo-raw")==0) {
         const int fps=argc>2?std::atoi(argv[2]):15;
         const int seconds=argc>3?std::atoi(argv[3]):66;
@@ -47,6 +75,6 @@ int main(int argc, char** argv) {
             width,height);
         return 0;
     }
-    std::fprintf(stderr,"Usage: %s --stats | --screenshot OUTPUT.ppm [demo_second] | --demo-raw [fps] [seconds]\n",argv[0]);
+    std::fprintf(stderr,"Usage: %s --interactive | --stats | --screenshot OUTPUT.ppm [demo_second] | --demo-raw [fps] [seconds]\n",argv[0]);
     return 2;
 }

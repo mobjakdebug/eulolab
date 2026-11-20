@@ -11,7 +11,8 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 FONT = ROOT / "assets/SpaceGrotesk.ttf"
 OUT = ROOT / "assets/font-atlas.bin"
-STYLES = [(20, 32, 36), (36, 54, 60)]  # point size, cell width, cell height
+# Compact workbench labels and section titles at 1280x720.
+STYLES = [(17, 27, 31), (27, 43, 49)]  # point size, cell width, cell height
 
 
 def main() -> None:

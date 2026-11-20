@@ -13,7 +13,7 @@ GP4 := $(SDK)/bin/linux/create-gp4
 OUT := $(ROOT)/out/ps4
 STAGE := $(OUT)/stage
 CONTENT_ID := IV0000-BREW00242_00-EULOROCKETLAB001
-SRC := core/rocket.cpp core/motor.cpp core/flight.cpp ui/canvas.cpp ui/rocket_view.cpp ui/app.cpp platform/ps4.cpp
+SRC := core/rocket.cpp core/motor.cpp core/flight.cpp ui/canvas.cpp ui/rocket_view.cpp ui/app.cpp ui/app_draw.cpp platform/ps4.cpp
 OBJ := $(addprefix $(OUT)/obj/,$(SRC:.cpp=.o))
 HEADERS := $(wildcard $(ROOT)/src/core/*.hpp $(ROOT)/src/ui/*.hpp) $(ROOT)/ps4/include/libusb.h
 # The SDK's libc++ expects musl's BSD and XOPEN declarations (nanosleep and

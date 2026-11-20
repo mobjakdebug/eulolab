@@ -10,19 +10,24 @@ constexpr double pi = 3.14159265358979323846;
 constexpr double g = 9.80665;
 constexpr double seaLevelRho = 1.225;
 constexpr double scaleHeight = 8500.0; // approximate exponential atmosphere, m
-constexpr double airframeCd = 0.65; // illustrative, not a wind-tunnel measurement
-constexpr double canopyCd = 1.20; // idealised fully open canopy; no inflation event
 constexpr double stepSeconds = 0.01;
 struct State { double h, v; };
 struct Forces { double acceleration, thrust, rho, remaining; };
 } // namespace
 
+bool motorFits(const Rocket& rocket,const MotorCurve& motor) {
+    const double halfLength=motor.lengthMm*0.0005;
+    return rocket.valid() && std::isfinite(motor.diameterMm) &&
+        std::isfinite(motor.lengthMm) && motor.diameterMm>0 && motor.lengthMm>0 &&
+        motor.diameterMm*0.0005 <= rocket.mountBoreRadius &&
+        rocket.motorFromTail >= halfLength-1e-9 &&
+        rocket.motorFromTail+halfLength <= rocket.mountLength+1e-9;
+}
+
 FlightResult simulate(const Rocket& rocket, const MotorCurve& motor, double initialAltitude) {
     FlightResult out;
-    if (!rocket.valid() || motor.points.size() < 3 || motor.totalImpulse() <= 0 ||
+    if (!motorFits(rocket,motor) || motor.points.size() < 3 || motor.totalImpulse() <= 0 ||
         !std::isfinite(initialAltitude) || initialAltitude < 0 || initialAltitude > 10000 ||
-        !std::isfinite(motor.diameterMm) ||
-        motor.diameterMm * 0.0005 > rocket.radius - rocket.wall ||
         motor.loadedKg <= motor.propellantKg) return out;
     const MassProperties mass = massProperties(rocket, motor.loadedKg, motor.propellantKg);
     if (mass.loaded <= motor.propellantKg || mass.dry <= 0) return out;
@@ -33,7 +38,8 @@ FlightResult simulate(const Rocket& rocket, const MotorCurve& motor, double init
             std::clamp(motor.impulse(t) / motor.totalImpulse(), 0.0, 1.0);
         const double remaining = motor.propellantKg - consumed;
         const double rho = seaLevelRho * std::exp(-std::max(0.0, state.h) / scaleHeight);
-        const double dragArea = airframeCd * airframeArea + (canopyOpen ? canopyCd * canopyArea : 0.0);
+        const double dragArea = rocket.airframeCd * airframeArea +
+            (canopyOpen ? rocket.canopyCd * canopyArea : 0.0);
         const double thrust = motor.thrust(t);
         const double drag = -0.5 * rho * dragArea * state.v * std::fabs(state.v);
         return {(thrust + drag) / (mass.dry + remaining) - g, thrust, rho, remaining};

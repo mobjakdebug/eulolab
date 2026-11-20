@@ -1,411 +1,646 @@
 #include "app.hpp"
+#include "workbench_layout.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace eulo {
 namespace {
-const uint32_t base=rgb(8,15,22), panel=rgb(15,26,35), surface=rgb(21,35,44);
-const uint32_t stroke=rgb(43,65,72), soft=rgb(101,129,139);
-const uint32_t ink=rgb(231,236,228), orange=rgb(255,174,103), cyan=rgb(106,213,203);
-const char* parts[] = {"BODY TUBE", "NOSE CONE", "FIN ASSEMBLY", "AVIONICS", "MOTOR DATA", "RECOVERY"};
-const char* partCodes[] = {"01", "02", "03", "04", "05", "06"};
-std::string fmt(const char* format,double value) {
-    char b[80]; std::snprintf(b,sizeof(b),format,value); return b;
-}
-void smallLabel(Canvas& c,int x,int y,const std::string& text,uint32_t color=soft) {
-    c.text(x,y,text,color,0);
-}
-void heading(Canvas& c,int x,int y,const std::string& text,uint32_t color=ink) {
-    c.text(x,y,text,color,1);
-}
-void lineDivider(Canvas& c,int x,int y,int w) { c.rect(x,y,w,1,stroke); }
-void badge(Canvas& c,int x,int y,const std::string& text,uint32_t fg,uint32_t bg,int w) {
-    c.roundRect(x,y,w,30,6,bg);
-    c.text(x+10,y+4,text,fg,0,w-18);
-}
-void field(Canvas& c,int x,int y,int w,const std::string& label,
-           const std::string& val,bool selected) {
-    if(selected) { c.roundRect(x,y,w,63,7,rgb(40,47,48));c.rect(x,y+7,3,49,orange); }
-    else c.roundRect(x,y,w,63,7,surface);
-    smallLabel(c,x+15,y+5,label,selected?orange:soft);
-    c.text(x+15,y+30,val,ink,0,w-(selected?73:28));
-    if(selected) c.text(x+w-47,y+31,"<>",orange);
+constexpr double pi = 3.14159265358979323846;
+constexpr int counts[] = {6,5,9,2,6,4};
+std::string number(double value,int decimals) {
+    char text[64];
+    std::snprintf(text,sizeof(text),"%.*f",decimals,value);
+    return text;
 }
 }
 
 bool App::init(const char* fontPath,const char* motorDirectory,const char* projectPath) {
-    if(!font_.load(fontPath) || !motorDirectory) return false;
-    projectPath_ = projectPath?projectPath:"project.ini";
+    if (!font_.load(fontPath) || !motorDirectory) return false;
+    projectPath_ = projectPath ? projectPath : "project.ini";
     std::string error;
     const std::string directory(motorDirectory);
-    if(!motors_[0].load((directory+"/Klima_C6.eng").c_str(),error) ||
-       !motors_[1].load((directory+"/Klima_D9.eng").c_str(),error)) {
-        status_=error;return false;
+    if (!motors_[0].load((directory+"/Klima_C6.eng").c_str(),error) ||
+        !motors_[1].load((directory+"/Klima_D9.eng").c_str(),error)) {
+        status_ = error;
+        return false;
     }
     rebuild();
     return true;
 }
 void App::rebuild() { flight_=simulate(rocket_,motor()); }
-int App::fieldCount() const { return selectedPart_==0?4:1; }
-void App::editField(int dir) {
-    const Rocket previous = rocket_;
+int App::fieldCount(int part) const { return part>=0 && part<6 ? counts[part] : 0; }
+
+App::Field App::field(int part,int index) const {
+    const Rocket& r=rocket_;
+    switch (part) {
+        case 0:
+            switch(index) {
+                case 0:return {"Length","mm",r.bodyLength*1000,200,3000,10,0,false};
+                case 1:return {"Outer diameter","mm",r.radius*2000,20,200,1,1,false};
+                case 2:return {"Wall thickness","mm",r.wall*1000,0.4,10,0.1,1,false};
+                case 3:return {"Material","",static_cast<double>(static_cast<int>(r.material)),0,2,1,0,true};
+                case 4:return {"Density","kg/m3",r.bodyDensity,80,8000,50,0,false};
+                case 5:return {"Drag coefficient","Cd",r.airframeCd,0.1,2.0,0.05,2,false};
+            } break;
+        case 1:
+            switch(index) {
+                case 0:return {"Length","mm",r.noseLength*1000,20,600,5,0,false};
+                case 1:return {"Profile","",static_cast<double>(static_cast<int>(r.noseProfile)),0,1,1,0,true};
+                case 2:return {"Shell thickness","mm",r.noseWall*1000,0.4,10,0.1,1,false};
+                case 3:return {"Material","",static_cast<double>(static_cast<int>(r.noseMaterial)),0,2,1,0,true};
+                case 4:return {"Density","kg/m3",r.noseDensity,80,8000,50,0,false};
+            } break;
+        case 2:
+            switch(index) {
+                case 0:return {"Fin count","",static_cast<double>(r.finCount),2,8,1,0,false};
+                case 1:return {"Span","mm",r.finSpan*1000,10,250,1,0,false};
+                case 2:return {"Root chord","mm",r.finRootChord*1000,20,500,2,0,false};
+                case 3:return {"Tip chord","mm",r.finTipChord*1000,10,400,2,0,false};
+                case 4:return {"Sweep","mm",r.finSweep*1000,0,250,2,0,false};
+                case 5:return {"Thickness","mm",r.finThickness*1000,1,12,0.1,1,false};
+                case 6:return {"Setback","mm",r.finSetback*1000,0,500,2,0,false};
+                case 7:return {"Material","",static_cast<double>(static_cast<int>(r.finMaterial)),0,2,1,0,true};
+                case 8:return {"Density","kg/m3",r.finDensity,80,8000,20,0,false};
+            } break;
+        case 3:
+            switch(index) {
+                case 0:return {"Assembly mass","g",r.electronicsMass*1000,0,1900,1,0,false};
+                case 1:return {"CG from tail","mm",r.electronicsFromTail*1000,0,3000,5,0,false};
+            } break;
+        case 4:
+            switch(index) {
+                case 0:return {"Published curve","",static_cast<double>(r.motorIndex),0,1,1,0,true};
+                case 1:return {"Motor CG / tail","mm",r.motorFromTail*1000,
+                    motor().lengthMm/2,std::max(motor().lengthMm/2,
+                        r.mountLength*1000-motor().lengthMm/2),2,0,false};
+                case 2:return {"Mount length","mm",r.mountLength*1000,70,400,5,0,false};
+                case 3:return {"Bore diameter","mm",r.mountBoreRadius*2000,18,50,0.5,1,false};
+                case 4:return {"Sleeve wall","mm",r.mountWall*1000,0.4,5,0.1,1,false};
+                case 5:return {"Sleeve density","kg/m3",r.mountDensity,80,8000,50,0,false};
+            } break;
+        case 5:
+            switch(index) {
+                case 0:return {"Canopy diameter","mm",r.parachuteDiameter*1000,0,1500,10,0,false};
+                case 1:return {"Canopy drag","Cd",r.canopyCd,0.2,3.0,0.05,2,false};
+                case 2:return {"Fabric density","g/m2",r.canopyArealDensity*1000,10,1000,5,0,false};
+                case 3:return {"CG from tail","mm",r.recoveryFromTail*1000,0,3000,5,0,false};
+            } break;
+    }
+    return {"Unknown","",0,0,0,0,0,false};
+}
+std::string App::valueText(int part,int index) const {
+    const Field f=field(part,index);
+    if(f.choice) {
+        if(part==0)return materialName(rocket_.material);
+        if(part==1 && index==1)return noseProfileName(rocket_.noseProfile);
+        if(part==1)return materialName(rocket_.noseMaterial);
+        if(part==2)return finMaterialName(rocket_.finMaterial);
+        if(part==4)return motor().name;
+    }
+    if(part==5 && index==0 && rocket_.parachuteDiameter==0)return "OFF";
+    return number(f.value,f.decimals);
+}
+
+bool App::applyField(int part,int index,double value) {
+    if(part<0 || part>=6 || index<0 || index>=fieldCount(part) || !std::isfinite(value))return false;
+    const Field f=field(part,index);
+    if(value<f.min-1e-7 || value>f.max+1e-7) {
+        status_=std::string(f.name)+": enter "+number(f.min,1)+" to "+number(f.max,1)+
+                (f.unit[0]?std::string(" ")+f.unit:"");
+        return false;
+    }
+    if(f.choice) value=std::round(value);
+    if(part==2 && index==0)value=std::round(value);
+    if(part==5 && index==0 && value>0 && value<100) {
+        status_="Canopy diameter: 0 (off) or at least 100 mm.";
+        return false;
+    }
+    if(std::fabs(f.value-value)<1e-8) {
+        status_="Value unchanged.";
+        return true;
+    }
+    const Rocket before=rocket_;
+    switch(part) {
+        case 0:
+            switch(index) {
+                case 0:rocket_.bodyLength=value/1000;break;
+                case 1:rocket_.radius=value/2000;break;
+                case 2:rocket_.wall=value/1000;break;
+                case 3:rocket_.material=static_cast<Material>(static_cast<int>(value));
+                       rocket_.bodyDensity=illustrativeDensity(rocket_.material);break;
+                case 4:rocket_.bodyDensity=value;break;
+                case 5:rocket_.airframeCd=value;break;
+            } break;
+        case 1:
+            switch(index) {
+                case 0:rocket_.noseLength=value/1000;break;
+                case 1:rocket_.noseProfile=static_cast<NoseProfile>(static_cast<int>(value));break;
+                case 2:rocket_.noseWall=value/1000;break;
+                case 3:rocket_.noseMaterial=static_cast<Material>(static_cast<int>(value));
+                       rocket_.noseDensity=illustrativeDensity(rocket_.noseMaterial);break;
+                case 4:rocket_.noseDensity=value;break;
+            } break;
+        case 2:
+            switch(index) {
+                case 0:rocket_.finCount=static_cast<int>(value);break;
+                case 1:rocket_.finSpan=value/1000;break;
+                case 2:rocket_.finRootChord=value/1000;break;
+                case 3:rocket_.finTipChord=value/1000;break;
+                case 4:rocket_.finSweep=value/1000;break;
+                case 5:rocket_.finThickness=value/1000;break;
+                case 6:rocket_.finSetback=value/1000;break;
+                case 7:rocket_.finMaterial=static_cast<FinMaterial>(static_cast<int>(value));
+                       rocket_.finDensity=illustrativeFinDensity(rocket_.finMaterial);break;
+                case 8:rocket_.finDensity=value;break;
+            } break;
+        case 3:
+            if(index==0)rocket_.electronicsMass=value/1000;
+            else rocket_.electronicsFromTail=value/1000;
+            break;
+        case 4:
+            switch(index) {
+                case 0:rocket_.motorIndex=static_cast<int>(value);break;
+                case 1:rocket_.motorFromTail=value/1000;break;
+                case 2:rocket_.mountLength=value/1000;break;
+                case 3:rocket_.mountBoreRadius=value/2000;break;
+                case 4:rocket_.mountWall=value/1000;break;
+                case 5:rocket_.mountDensity=value;break;
+            } break;
+        case 5:
+            switch(index) {
+                case 0:rocket_.parachuteDiameter=value/1000;break;
+                case 1:rocket_.canopyCd=value;break;
+                case 2:rocket_.canopyArealDensity=value/1000;break;
+                case 3:rocket_.recoveryFromTail=value/1000;break;
+            } break;
+    }
+    const bool geometryValid=rocket_.valid();
+    const bool motorFit=geometryValid && motorFits(rocket_,motor());
+    if(!geometryValid || !motorFit) {
+        rocket_=before;
+        status_=geometryValid?
+            "Rejected: motor casing must fit fully inside the mount.":
+            "Rejected: dependent geometry must fit inside the body.";
+        return false;
+    }
+    previousRocket_=before;
+    hasUndo_=true;
+    dirty_=true;
+    rebuild();
+    status_=std::string(f.name)+" changed; mass and flight model recalculated.";
+    return true;
+}
+bool App::setSelectedValue(double value) {return applyField(selectedPart_,selectedField_,value);}
+void App::editField(int direction) {
+    const Field f=field(selectedPart_,selectedField_);
+    double next=f.value + direction*f.step;
+    if(f.choice) next = next<f.min?f.max:next>f.max?f.min:next;
+    else if(selectedPart_==5 && selectedField_==0) {
+        if(f.value==0 && direction>0)next=100;
+        else if(next<100 && direction<0)next=f.value>100?100:0;
+    }
+    if(!f.choice) next=std::clamp(next,f.min,f.max);
+    applyField(selectedPart_,selectedField_,next);
+}
+void App::resetSelectedPart() {
+    const Rocket before=rocket_,defaults{};
     switch(selectedPart_) {
         case 0:
-            if(selectedField_==0) rocket_.bodyLength=std::clamp(rocket_.bodyLength+dir*.01,.25,2.0);
-            else if(selectedField_==1) rocket_.radius=std::clamp(rocket_.radius+dir*.001,.012,.09);
-            else if(selectedField_==2) rocket_.wall=std::clamp(rocket_.wall+dir*.0002,.0005,rocket_.radius*.4);
-            else {
-                int m=(static_cast<int>(rocket_.material)+dir+3)%3;
-                rocket_.material=static_cast<Material>(m);
-                rocket_.bodyDensity=illustrativeDensity(rocket_.material);
-            }
-            break;
-        case 1: rocket_.noseLength=std::clamp(rocket_.noseLength+dir*.01,.06,.45); break;
-        case 2: rocket_.finSpan=std::clamp(rocket_.finSpan+dir*.005,.02,.25); break;
-        case 3: rocket_.electronicsMass=std::clamp(rocket_.electronicsMass+dir*.005,.0,.75); break;
-        case 4: rocket_.motorIndex=(rocket_.motorIndex+dir+2)%2;break;
+            rocket_.bodyLength=defaults.bodyLength;rocket_.radius=defaults.radius;
+            rocket_.wall=defaults.wall;rocket_.material=defaults.material;
+            rocket_.bodyDensity=defaults.bodyDensity;rocket_.airframeCd=defaults.airframeCd;break;
+        case 1:
+            rocket_.noseLength=defaults.noseLength;rocket_.noseWall=defaults.noseWall;
+            rocket_.noseProfile=defaults.noseProfile;rocket_.noseMaterial=defaults.noseMaterial;
+            rocket_.noseDensity=defaults.noseDensity;break;
+        case 2:
+            rocket_.finCount=defaults.finCount;rocket_.finSpan=defaults.finSpan;
+            rocket_.finRootChord=defaults.finRootChord;rocket_.finTipChord=defaults.finTipChord;
+            rocket_.finSweep=defaults.finSweep;rocket_.finThickness=defaults.finThickness;
+            rocket_.finSetback=defaults.finSetback;rocket_.finMaterial=defaults.finMaterial;
+            rocket_.finDensity=defaults.finDensity;break;
+        case 3:
+            rocket_.electronicsMass=defaults.electronicsMass;
+            rocket_.electronicsFromTail=defaults.electronicsFromTail;break;
+        case 4:
+            rocket_.motorIndex=defaults.motorIndex;rocket_.motorFromTail=defaults.motorFromTail;
+            rocket_.mountLength=defaults.mountLength;rocket_.mountBoreRadius=defaults.mountBoreRadius;
+            rocket_.mountWall=defaults.mountWall;rocket_.mountDensity=defaults.mountDensity;break;
         case 5:
-            if(rocket_.parachuteDiameter==0 && dir>0) rocket_.parachuteDiameter=.20;
-            else if(rocket_.parachuteDiameter<=.10 && dir<0) rocket_.parachuteDiameter=0;
-            else if(rocket_.parachuteDiameter>0)
-                rocket_.parachuteDiameter=std::clamp(rocket_.parachuteDiameter+dir*.02,.10,1.5);
-            break;
-        default: return;
+            rocket_.parachuteDiameter=defaults.parachuteDiameter;
+            rocket_.canopyCd=defaults.canopyCd;
+            rocket_.canopyArealDensity=defaults.canopyArealDensity;
+            rocket_.recoveryFromTail=defaults.recoveryFromTail;break;
     }
-    if(!rocket_.valid() || motor().diameterMm*.0005>rocket_.radius-rocket_.wall) {
-        rocket_=previous; status_="Invalid geometry or motor clearance."; return;
+    if(!rocket_.valid() || !motorFits(rocket_,motor())) {
+        rocket_=before;
+        status_="Reset rejected: another component depends on this geometry.";
+        return;
     }
-    rebuild();
-    status_="Model updated - estimates recalculated.";
+    previousRocket_=before;hasUndo_=true;dirty_=true;rebuild();
+    status_=std::string(workbench::partNames[selectedPart_])+" restored to defaults.";
 }
+
+void App::beginEdit() {
+    const Field f=field(selectedPart_,selectedField_);
+    if(f.choice || !textEntryAvailable_) {
+        editField(1);
+        if(!textEntryAvailable_)status_="Use the D-pad left/right to adjust; X steps once.";
+        return;
+    }
+    editing_=true;editReplace_=true;
+    editBuffer_=number(f.value,f.decimals);
+    status_="Type a value in the displayed units; Enter applies, Esc cancels.";
+}
+void App::commitEdit() {
+    if(!editing_)return;
+    char* end=nullptr;
+    const double input=std::strtod(editBuffer_.c_str(),&end);
+    if(editBuffer_.empty() || end==editBuffer_.c_str() || *end!='\0' || !std::isfinite(input)) {
+        status_="Enter a finite number, then press Enter.";
+        return;
+    }
+    if(setSelectedValue(input)) {editing_=false;editBuffer_.clear();}
+}
+void App::cancelEdit() {
+    editing_=false;editBuffer_.clear();status_="Edit cancelled.";
+}
+void App::typeCharacter(char ch) {
+    if(!editing_)return;
+    if((ch>='0' && ch<='9') || (ch=='.' && editBuffer_.find('.')==std::string::npos) ||
+       (ch=='-' && (editReplace_ || editBuffer_.empty()))) {
+        if(editReplace_)editBuffer_.clear();
+        if(editBuffer_.size()<22)editBuffer_+=ch;
+        editReplace_=false;
+    }
+}
+int App::menuCount(int index) const {return index>=0 && index<5?workbench::menus[index].count:0;}
+void App::runMenuItem() {
+    if(!menuOpen_)return;
+    const Action chosen=workbench::menus[menuIndex_].items[menuItem_].action;
+    menuOpen_=false;
+    action(chosen);
+}
+
 void App::action(Action a) {
     demoMode_=false;
+    if(confirmDiscard_) {
+        switch(a) {
+            case Action::Back:confirmDiscard_=false;status_="Kept the current project.";return;
+            case Action::FocusNext:case Action::NextPart:case Action::Increase:
+                discardFocus_=(discardFocus_+1)%3;return;
+            case Action::FocusPrevious:case Action::PrevPart:case Action::Decrease:
+                discardFocus_=(discardFocus_+2)%3;return;
+            case Action::Confirm:
+                if(discardFocus_==0) {
+                    confirmDiscard_=false;status_="Kept the current project.";return;
+                }
+                if(discardFocus_==1 && !saveProject(rocket_,projectPath_.c_str())) {
+                    status_="Save failed; project unchanged. Check storage or cancel.";
+                    return;
+                }
+                if(discardFocus_==1) {dirty_=false;saved_=true;}
+                confirmDiscard_=false;
+                skipDiscardOnce_=true;
+                action(pendingAction_);
+                return;
+            default:return;
+        }
+    }
+    if(editing_ && a!=Action::Back && a!=Action::Confirm)commitEdit();
+    if(editing_) {
+        if(a==Action::Back)cancelEdit();
+        if(a==Action::Confirm)commitEdit();
+        return;
+    }
+    if(helpMode_ && a!=Action::HelpControls && a!=Action::HelpModel) {
+        if(a==Action::Back || a==Action::Confirm || a==Action::Menu)helpMode_=0;
+        return;
+    }
+    if((a==Action::NewProject || a==Action::Load) && dirty_ && !skipDiscardOnce_) {
+        menuOpen_=false;
+        pendingAction_=a;discardFocus_=0;confirmDiscard_=true;
+        status_="Unsaved changes. Save, discard or cancel.";
+        return;
+    }
+    skipDiscardOnce_=false;
+    if(menuOpen_ && a!=Action::Menu && a!=Action::Back &&
+       a!=Action::NextPart && a!=Action::PrevPart &&
+       a!=Action::NextField && a!=Action::PrevField &&
+       a!=Action::Increase && a!=Action::Decrease && a!=Action::Confirm)menuOpen_=false;
+    if(menuOpen_) {
+        switch(a) {
+            case Action::Menu:case Action::Back:menuOpen_=false;return;
+            case Action::NextPart:case Action::Increase:
+                menuIndex_=(menuIndex_+1)%5;menuItem_=0;return;
+            case Action::PrevPart:case Action::Decrease:
+                menuIndex_=(menuIndex_+4)%5;menuItem_=0;return;
+            case Action::NextField:menuItem_=(menuItem_+1)%menuCount(menuIndex_);return;
+            case Action::PrevField:
+                menuItem_=(menuItem_+menuCount(menuIndex_)-1)%menuCount(menuIndex_);return;
+            case Action::Confirm:runMenuItem();return;
+            default:break;
+        }
+    }
     switch(a) {
-        case Action::NewProject: rocket_=Rocket{}; rebuild(); page_=Page::Garage; selectedPart_=0; selectedField_=0; simTime_=0; playing_=false; status_="New project created."; break;
-        case Action::Garage: if(page_!=Page::Home) page_=Page::Garage; break;
+        case Action::NewProject:
+            rocket_=Rocket{};rebuild();page_=Page::Garage;selectedPart_=0;
+            selectedField_=0;simTime_=0;playing_=false;dirty_=false;saved_=false;hasUndo_=false;
+            status_="New project. Select any component to edit.";break;
+        case Action::Garage:page_=Page::Garage;focusRegion_=3;playing_=false;
+            status_="Assembly workspace.";break;
         case Action::Flight:
-            if(page_!=Page::Home && flight_.valid) {page_=Page::Flight;simTime_=0;playing_=true;}
-            else status_="Simulation unavailable - check the motor fit.";
+            if(flight_.valid && !flight_.samples.empty()) {
+                page_=Page::Flight;focusRegion_=4;simTime_=0;playing_=true;
+                status_="Playing the educational 1D flight model.";
+            } else status_="Simulation unavailable: inspect geometry and motor fit.";
             break;
-        case Action::Ground: if(page_!=Page::Home) {page_=Page::Ground;playing_=false;} break;
-        case Action::Back: page_=page_==Page::Flight||page_==Page::Ground?Page::Garage:Page::Home;playing_=false;break;
-        case Action::NextPart: selectedPart_=(selectedPart_+1)%6;selectedField_=0;break;
-        case Action::PrevPart: selectedPart_=(selectedPart_+5)%6;selectedField_=0;break;
-        case Action::NextField: selectedField_=(selectedField_+1)%fieldCount();break;
-        case Action::PrevField: selectedField_=(selectedField_+fieldCount()-1)%fieldCount();break;
-        case Action::Increase: if(page_==Page::Garage) editField(1);
+        case Action::Ground:
+            page_=Page::Ground;focusRegion_=5;playing_=false;
+            status_="USB discovery only; no telemetry is being read.";break;
+        case Action::Back:
+            if(menuOpen_)menuOpen_=false;
+            else if(helpMode_)helpMode_=0;
+            else if(page_!=Page::Garage) {page_=Page::Garage;focusRegion_=3;playing_=false;}
+            break;
+        case Action::NextPart:selectedPart_=(selectedPart_+1)%6;selectedField_=0;
+            focusRegion_=2;page_=Page::Garage;break;
+        case Action::PrevPart:selectedPart_=(selectedPart_+5)%6;selectedField_=0;
+            focusRegion_=2;page_=Page::Garage;break;
+        case Action::NextField:selectedField_=(selectedField_+1)%fieldCount(selectedPart_);
+            focusRegion_=3;break;
+        case Action::PrevField:selectedField_=(selectedField_+fieldCount(selectedPart_)-1)%fieldCount(selectedPart_);
+            focusRegion_=3;break;
+        case Action::Increase:
+            if(page_==Page::Garage)editField(1);
             else if(page_==Page::Flight && !flight_.samples.empty())
                 simTime_=std::min(flight_.samples.back().time,simTime_+.5);
             break;
-        case Action::Decrease: if(page_==Page::Garage) editField(-1);
-            else if(page_==Page::Flight) simTime_=std::max(0.,simTime_-.5);
+        case Action::Decrease:
+            if(page_==Page::Garage)editField(-1);
+            else if(page_==Page::Flight)simTime_=std::max(0.0,simTime_-.5);
             break;
-        case Action::TogglePlay: if(page_==Page::Flight) playing_=!playing_; break;
-        case Action::Save: status_=saveProject(rocket_,projectPath_.c_str())?"Project saved.":"Save failed - check storage access.";break;
+        case Action::TogglePlay:
+            if(page_!=Page::Flight) {action(Action::Flight);break;}
+            if(!playing_ && flight_.valid && !flight_.samples.empty() &&
+               simTime_>=flight_.samples.back().time-1e-6)simTime_=0;
+            playing_=!playing_;status_=playing_?"Playing flight model.":"Playback paused.";break;
+        case Action::Save:
+            if(saveProject(rocket_,projectPath_.c_str())) {
+                dirty_=false;saved_=true;status_="Project saved.";
+            } else status_="Save failed: verify the project storage directory.";
+            break;
         case Action::Load:
             if(loadProject(rocket_,projectPath_.c_str())) {
-                rebuild();status_=flight_.valid?"Project loaded.":"Motor does not fit tube.";
-                page_=Page::Garage;playing_=false;
-            } else status_="No valid saved project.";
+                rebuild();dirty_=false;saved_=true;page_=Page::Garage;playing_=false;
+                status_=flight_.valid?"Project loaded.":"Project loaded; motor clearance invalid.";
+            } else status_="Open failed: no valid saved project at this location.";
             break;
+        case Action::Menu:menuOpen_=true;menuItem_=0;focusRegion_=0;break;
+        case Action::Confirm:
+            if(focusRegion_==3) {
+                if(page_==Page::Garage)beginEdit();
+                else action(Action::Garage);
+            }
+            else if(focusRegion_==1)action(workbench::tools[toolbarFocus_].action);
+            else if(focusRegion_==0)action(Action::Menu);
+            else if(focusRegion_==4)action(Action::TogglePlay);
+            else if(focusRegion_==5)action(page_==Page::Garage?
+                Action::ResetPart:Action::Garage);
+            break;
+        case Action::Undo:
+            if(hasUndo_) {
+                rocket_=previousRocket_;hasUndo_=false;dirty_=true;rebuild();
+                status_="Last model change undone.";
+            } else status_="Nothing to undo.";
+            break;
+        case Action::ResetPart:resetSelectedPart();break;
+        case Action::JumpApogee:
+            if(flight_.valid && !flight_.samples.empty()) {
+                page_=Page::Flight;focusRegion_=4;playing_=false;simTime_=flight_.apogeeTime;
+                status_="At model apogee. Drag the time cursor to inspect the run.";
+            } else status_="No valid flight to inspect.";
+            break;
+        case Action::FitView:zoom_=1;yawOffset_=0;pitchOffset_=0;
+            status_="Viewport fitted to the model.";break;
+        case Action::HelpControls:helpMode_=1;status_="Controls reference.";break;
+        case Action::HelpModel:helpMode_=2;status_="Model assumptions and limitations.";break;
+        case Action::FocusNext:focusRegion_=(focusRegion_+1)%6;break;
+        case Action::FocusPrevious:focusRegion_=(focusRegion_+5)%6;break;
     }
 }
 void App::tick(double seconds) {
-    if(!playing_||!flight_.valid||flight_.samples.empty())return;
-    simTime_+=std::clamp(seconds,0.0,0.1);
-    if(simTime_>flight_.samples.back().time) {simTime_=flight_.samples.back().time;playing_=false;}
+    if(!playing_ || page_!=Page::Flight || !flight_.valid || flight_.samples.empty())return;
+    simTime_+=std::clamp(seconds,0.0,0.25);
+    if(simTime_>=flight_.samples.back().time) {
+        simTime_=flight_.samples.back().time;playing_=false;
+        status_="Playback complete; model landed or ended.";
+    }
 }
 void App::orbit(double yawRadians,double pitchRadians) {
-    if(page_==Page::Home || !std::isfinite(yawRadians) || !std::isfinite(pitchRadians))return;
-    yawOffset_=std::remainder(yawOffset_+std::clamp(yawRadians,-0.15,0.15),6.283185307179586);
-    pitchOffset_=std::clamp(pitchOffset_+std::clamp(pitchRadians,-0.15,0.15),-0.35,0.35);
-}
-void App::demoAt(double seconds) {
-    // Deterministic HOST recording of the actual App actions. Replaying from
-    // a fresh project makes standalone screenshots agree with the full video.
-    const int stage=seconds<4?0:seconds<10?1:seconds<16?2:seconds<22?3:
-        seconds<28?4:seconds<34?5:seconds<40?6:seconds<45?7:
-        seconds<73?8:9;
-    if(stage!=demoStage_) {
-        demoStage_=stage;
-        if(stage==0) {page_=Page::Home;status_="Create a new project.";}
-        else {
-            action(Action::NewProject);
-            if(stage>=2) {
-                selectedPart_=0;selectedField_=3;
-                action(Action::Increase);action(Action::Increase); // carbon laminate
-            }
-            if(stage>=3) {
-                selectedPart_=1;selectedField_=0;
-                action(Action::Increase);action(Action::Increase); // nose length
-            }
-            if(stage>=4) {
-                selectedPart_=2;action(Action::Increase);action(Action::Increase); // fins
-            }
-            if(stage>=5) { selectedPart_=3;action(Action::Increase); } // avionics
-            if(stage>=6) { selectedPart_=4;action(Action::Increase); } // Klima D9
-            if(stage>=7) {
-                selectedPart_=5;
-                action(Action::Increase);action(Action::Increase);action(Action::Increase);
-            }
-            if(stage<=7) {
-                selectedPart_=stage==3?1:stage==4?2:stage==5?3:stage==6?4:stage==7?5:0;
-                selectedField_=stage==2?3:0;
-                status_=stage==1?"01 / 25 mm body, 34 cm tube":
-                    stage==2?"02 / choose illustrative laminate":
-                    stage==3?"03 / extend the nose profile":
-                    stage==4?"04 / adjust three balsa fins":
-                    stage==5?"05 / assign flight-logger mass":
-                    stage==6?"06 / select published Klima D9 data":
-                    "07 / ideal canopy recovery estimate";
-            } else if(stage==8) {
-                action(Action::Flight);
-                playing_=false;
-                status_="08 / time-compressed simulation, not a real launch";
-            } else {
-                action(Action::Ground);
-                status_="09 / PS4 USB discovery only; no live link";
-            }
-        }
-    }
-    demoMode_=true;
-    if(stage==8 && !flight_.samples.empty()) {
-        // Compress the two phases independently so the full ascent and
-        // idealised descent are visible in a short, labelled HOST replay.
-        const double u=std::clamp((seconds-45)/28.0,0.0,1.0);
-        const double end=flight_.samples.back().time;
-        simTime_=u<.4?flight_.apogeeTime*u/.4:
-            flight_.apogeeTime+(end-flight_.apogeeTime)*(u-.4)/.6;
-    }
+    if(!std::isfinite(yawRadians) || !std::isfinite(pitchRadians))return;
+    yawOffset_=std::remainder(yawOffset_+std::clamp(yawRadians,-0.2,0.2),2*pi);
+    pitchOffset_=std::clamp(pitchOffset_+std::clamp(pitchRadians,-0.2,0.2),-0.4,0.4);
 }
 
-void App::drawChrome(Canvas& c) const {
-    c.clear(base);
-    c.rect(0,0,c.width(),79,rgb(11,20,27));
-    c.rect(0,77,c.width(),1,stroke);
-    c.roundRect(21,17,44,44,8,orange);
-    c.rect(34,26,5,25,base);
-    c.rect(34,26,19,5,base);
-    c.rect(34,37,14,4,base);
-    c.rect(34,47,19,4,base);
-    heading(c,79,8,"EULO",ink);
-    heading(c,191,8,"LAB",orange);
-    smallLabel(c,82,46,"NATIVE ROCKET DESIGN STUDIO",soft);
-    c.line(307,18,307,57,stroke);
-    smallLabel(c,334,27,"PROJECT /",soft);
-    smallLabel(c,438,27,page_==Page::Home?"UNTITLED": "AURORA - 01",ink);
-    badge(c,1072,24,demoMode_?"HOST REPLAY":"PS4 NATIVE",demoMode_?orange:cyan,
-          demoMode_?rgb(61,42,32):rgb(25,52,53),165);
-}
-
-void App::drawSidebar(Canvas& c) const {
-    const int x=20,y=102,w=238,h=482;
-    c.roundRect(x,y,w,h,9,panel);
-    c.border(x,y,w,h,stroke);
-    smallLabel(c,x+19,y+15,page_==Page::Home?"NAVIGATION":
-        page_==Page::Garage?"ASSEMBLY TREE":page_==Page::Flight?"MISSION TIMELINE":"GROUND LINK",orange);
-    lineDivider(c,x+18,y+45,w-36);
-    if(page_==Page::Home) {
-        const char* items[]={"NEW PROJECT", "ASSEMBLY GARAGE", "FLIGHT SIMULATION", "GROUND STATION"};
-        for(int i=0;i<4;++i) {
-            const int ry=y+65+i*71;
-            c.roundRect(x+12,ry,w-24,54,6,i==0?rgb(53,54,46):surface);
-            smallLabel(c,x+27,ry+13,items[i],i==0?orange:soft);
-        }
-        smallLabel(c,x+20,y+384,"ALL MODULES / LOCAL",soft);
-        smallLabel(c,x+20,y+410,"NO CLOUD REQUIRED",cyan);
-    } else if(page_==Page::Garage) {
-        for(int i=0;i<6;++i) {
-            const int ry=y+58+i*62;
-            const bool on=i==selectedPart_;
-            c.roundRect(x+11,ry,w-22,53,6,on?rgb(54,52,44):surface);
-            if(on)c.rect(x+11,ry+9,3,35,orange);
-            smallLabel(c,x+26,ry+11,partCodes[i],on?orange:soft);
-            smallLabel(c,x+62,ry+11,parts[i],on?ink:soft);
-        }
-    } else {
-        const char* labels[]= {"MISSION PROFILE", "LAUNCH PAD", "ASCENT", "APOGEE", "DESCENT", "TELEMETRY"};
-        for(int i=0;i<6;++i) {
-            const int ry=y+59+i*62;
-            const bool active=page_==Page::Flight?(i<=3 || (i==4 && simTime_>flight_.apogeeTime)):(i==5);
-            c.circle(x+30,ry+20,4,active?cyan:stroke);
-            smallLabel(c,x+48,ry+9,labels[i],active?ink:soft);
-            if(i!=5)c.rect(x+29,ry+31,2,30,stroke);
-        }
-    }
-    c.roundRect(x+12,y+h-42,w-24,28,5,surface);
-    smallLabel(c,x+21,y+h-41,page_==Page::Ground?"USB / READ ONLY":"LOCAL PROJECT",cyan);
-}
-
-void App::drawHome(Canvas& c) const {
-    c.gradient(276,102,624,482,rgb(17,43,53),rgb(10,23,35));
-    for(int i=0;i<19;++i) {
-        c.line(276+24+i*33,103,276+24+i*33,584,rgb(27,53,63));
-    }
-    c.circle(590,311,173,rgb(22,47,56));
-    c.ring(590,311,151,1,rgb(64,97,99));
-    c.ring(590,311,127,1,rgb(53,85,90));
-    c.line(590,132,590,492,rgb(53,83,85));
-    c.line(407,311,773,311,rgb(53,83,85));
-    smallLabel(c,318,132,"OPEN AN IDEA. MODEL THE FLIGHT.",cyan);
-    heading(c,322,211,"BUILD THE",ink);
-    heading(c,322,269,"POSSIBLE.",orange);
-    smallLabel(c,326,346,"A native PS4 workspace for model-rocket design,",ink);
-    smallLabel(c,326,372,"flight estimates and read-only ground telemetry.",ink);
-    c.roundRect(323,427,237,52,8,orange);
-    smallLabel(c,343,440,"NEW PROJECT  [X]",base);
-    c.border(276,102,624,482,stroke);
-}
-
-void App::drawInspector(Canvas& c,double now) const {
-    (void)now;
-    const int x=918,y=102,w=342,h=482;
-    c.roundRect(x,y,w,h,9,panel);c.border(x,y,w,h,stroke);
-    if(page_==Page::Home) {
-        smallLabel(c,x+19,y+19,"THE WORKSPACE",orange);
-        heading(c,x+16,y+60,"ONE SYSTEM.",ink);
-        heading(c,x+16,y+111,"EVERY LAYER.",ink);
-        lineDivider(c,x+19,y+181,w-38);
-        const char* features[]={"01 / PARAMETRIC ASSEMBLY","02 / MATERIAL-AWARE MASS","03 / COMMERCIAL .ENG DATA","04 / 1D FLIGHT PROTOTYPE","05 / USB DISCOVERY"};
-        for(int i=0;i<5;++i) smallLabel(c,x+20,y+201+i*39,features[i],i==3?orange:ink);
-        c.roundRect(x+18,y+427,w-36,37,6,rgb(49,45,36));
-        smallLabel(c,x+29,y+433,"EARLY BUILD  /  NOT FLIGHT RATED",orange);
+void App::key(const std::string& name,bool ctrl,bool shift) {
+    if(confirmDiscard_) {
+        if(name=="Escape")action(Action::Back);
+        else if(name=="Tab")action(shift?Action::FocusPrevious:Action::FocusNext);
+        else if(name=="ArrowRight" || name=="ArrowDown")action(Action::FocusNext);
+        else if(name=="ArrowLeft" || name=="ArrowUp")action(Action::FocusPrevious);
+        else if(name=="Enter" || name=="Space")action(Action::Confirm);
         return;
     }
-    if(page_==Page::Garage) {
-        smallLabel(c,x+18,y+16,"COMPONENT INSPECTOR / "+std::string(partCodes[selectedPart_]),orange);
-        heading(c,x+17,y+48,parts[selectedPart_],ink);
-        lineDivider(c,x+18,y+106,w-36);
-        int fy=y+121;
-        if(selectedPart_==0) {
-            field(c,x+15,fy,w-30,"BODY LENGTH",fmt("%.3f m",rocket_.bodyLength),selectedField_==0);fy+=69;
-            field(c,x+15,fy,w-30,"OUTER DIAMETER",fmt("%.1f mm",rocket_.radius*2000),selectedField_==1);fy+=69;
-            field(c,x+15,fy,w-30,"WALL THICKNESS",fmt("%.1f mm",rocket_.wall*1000),selectedField_==2);fy+=69;
-            field(c,x+15,fy,w-30,"MATERIAL / DENSITY",materialName(rocket_.material),selectedField_==3);
-        } else if(selectedPart_==1) {
-            field(c,x+15,fy,w-30,"CONE LENGTH",fmt("%.3f m",rocket_.noseLength),true);fy+=69;
-            field(c,x+15,fy,w-30,"CONE PROFILE","Conic / analytical mesh",false);fy+=85;
-            smallLabel(c,x+18,fy,"No strength test in model.",soft);
-        } else if(selectedPart_==2) {
-            field(c,x+15,fy,w-30,"FIN SPAN",fmt("%.1f mm",rocket_.finSpan*1000),true);fy+=69;
-            field(c,x+15,fy,w-30,"FIN COUNT","3 radial / illustrative balsa",false);fy+=85;
-            smallLabel(c,x+18,fy,"Fin mass is an illustrative estimate.",soft);
-        } else if(selectedPart_==3) {
-            field(c,x+15,fy,w-30,"AVIONICS MASS",fmt("%.3f kg",rocket_.electronicsMass),true);fy+=69;
-            field(c,x+15,fy,w-30,"PAYLOAD MODEL","Mass-only / no board I/O",false);fy+=85;
-            smallLabel(c,x+18,fy,"Mass changes the computed CG.",soft);
-        } else if(selectedPart_==4) {
-            field(c,x+15,fy,w-30,"PUBLISHED .ENG MOTOR",
-                motor().manufacturer+" "+motor().name,true);fy+=69;
-            field(c,x+15,fy,w-30,"TOTAL IMPULSE",fmt("%.1f N*s",motor().totalImpulse()),false);fy+=69;
-            field(c,x+15,fy,w-30,"BURN TIME",fmt("%.2f s",motor().burnTime()),false);fy+=75;
-            smallLabel(c,x+18,fy,"PD data / Leo Nutz.",soft);
-        } else {
-            field(c,x+15,fy,w-30,"CANOPY DIAMETER",rocket_.parachuteDiameter>0?
-                fmt("%.2f m / ideal",rocket_.parachuteDiameter):"Disabled",true);fy+=69;
-            field(c,x+15,fy,w-30,"DEPLOYMENT MODEL","Instant at apogee",false);fy+=80;
-            smallLabel(c,x+18,fy,"No opening shock model.",orange);
-        }
-        lineDivider(c,x+18,y+415,w-36);
-        smallLabel(c,x+20,y+425,"MASS / ILLUSTRATIVE",soft);
-        const auto mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
-        c.text(x+20,y+451,fmt("%.3f kg LOADED",mass.loaded),cyan);
-    } else if(page_==Page::Flight) {
-        const FlightSample s=flight_.at(simTime_);
-        smallLabel(c,x+18,y+16,"FLIGHT ANALYSIS / 1D MODEL",orange);
-        heading(c,x+16,y+48,s.altitude<=0 && simTime_>0?"LANDED":
-            s.velocity<0?"DESCENT":"ASCENT",ink);
-        lineDivider(c,x+18,y+106,w-36);
-        field(c,x+15,y+119,w-30,"ALTITUDE",fmt("%.1f m",s.altitude),false);
-        field(c,x+15,y+190,w-30,"VELOCITY",fmt("%.1f m/s",s.velocity),false);
-        field(c,x+15,y+261,w-30,"MOTOR THRUST / .ENG",fmt("%.1f N",s.thrust),false);
-        smallLabel(c,x+20,y+350,"MODEL APOGEE",soft);
-        heading(c,x+19,y+369,fmt("%.0f m",flight_.apogee),cyan);
-        smallLabel(c,x+20,y+417,"MODEL / NOT FLIGHT RATED",orange);
-        smallLabel(c,x+20,y+446,rocket_.parachuteDiameter>0?
-            "IDEAL CANOPY / NO WIND":"NO CANOPY / NO WIND",soft);
-    } else {
-        smallLabel(c,x+18,y+16,"GROUND STATION / USB",orange);
-        heading(c,x+16,y+48,"TELEMETRY",ink);
-        lineDivider(c,x+18,y+106,w-36);
-        c.roundRect(x+15,y+130,w-30,84,7,rgb(38,40,40));
-        smallLabel(c,x+30,y+141,"LINK STATUS",orange);
-        smallLabel(c,x+30,y+173,usbStatus_,ink);
-        smallLabel(c,x+18,y+246,"DATA SOURCE",soft);
-        smallLabel(c,x+18,y+276,"No device is sending telemetry.",ink);
-        smallLabel(c,x+18,y+310,"Simulation is never displayed",soft);
-        smallLabel(c,x+18,y+335,"as measured telemetry.",soft);
-        c.roundRect(x+15,y+417,w-30,45,7,rgb(25,49,49));
-        smallLabel(c,x+31,y+428,"DISCOVERY ONLY / NO WRITE",cyan);
+    if(ctrl) {
+        if(name=="s" || name=="S") {action(Action::Save);return;}
+        if(name=="o" || name=="O") {action(Action::Load);return;}
+        if(name=="n" || name=="N") {action(Action::NewProject);return;}
+        if(name=="z" || name=="Z") {action(Action::Undo);return;}
+    }
+    if(editing_) {
+        if(name=="Enter")commitEdit();
+        else if(name=="Escape")cancelEdit();
+        else if(name=="Backspace") {
+            if(editReplace_)editBuffer_.clear();
+            else if(!editBuffer_.empty())editBuffer_.pop_back();
+            editReplace_=false;
+        } else if(name.size()==1)typeCharacter(name[0]);
+        return;
+    }
+    if(name=="Tab") {action(shift?Action::FocusPrevious:Action::FocusNext);return;}
+    if(name=="F1") {action(Action::HelpControls);return;}
+    if(name=="Alt") {action(Action::Menu);return;}
+    if(name=="Space") {action(Action::Confirm);return;}
+    if(name=="Escape") {action(Action::Back);return;}
+    if(menuOpen_) {
+        if(name=="ArrowLeft")action(Action::PrevPart);
+        else if(name=="ArrowRight")action(Action::NextPart);
+        else if(name=="ArrowUp")action(Action::PrevField);
+        else if(name=="ArrowDown")action(Action::NextField);
+        else if(name=="Enter" || name==" ")action(Action::Confirm);
+        return;
+    }
+    if(name=="ArrowUp") {
+        if(focusRegion_==2)action(Action::PrevPart);
+        else if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+9)%10;
+        else action(Action::PrevField);
+    } else if(name=="ArrowDown") {
+        if(focusRegion_==2)action(Action::NextPart);
+        else if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+1)%10;
+        else action(Action::NextField);
+    } else if(name=="ArrowLeft") {
+        if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+9)%10;
+        else if(focusRegion_==2)action(Action::PrevPart);
+        else action(Action::Decrease);
+    } else if(name=="ArrowRight") {
+        if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+1)%10;
+        else if(focusRegion_==2)action(Action::NextPart);
+        else action(Action::Increase);
+    } else if(name=="Enter" || name==" ")action(Action::Confirm);
+    else if(name.size()==1 && name[0]>='1' && name[0]<='6') {
+        selectedPart_=name[0]-'1';selectedField_=0;page_=Page::Garage;focusRegion_=2;
     }
 }
 
-void App::drawFooter(Canvas& c) const {
-    c.roundRect(20,600,1240,101,9,panel);c.border(20,600,1240,101,stroke);
-    smallLabel(c,36,607,page_==Page::Flight?"TRAJECTORY / ALTITUDE VS. TIME":"SYSTEM STATUS / DESIGN ITERATION",orange);
-    if(page_==Page::Flight && flight_.valid && !flight_.samples.empty()) {
-        const double tmax=flight_.samples.back().time;
-        const double hmax=std::max(1.0,flight_.apogee);
-        int px=369,py=663;
-        for(int i=0;i<=220;++i) {
-            const double t=tmax*i/220.0;
-            const int cx=369+i*3;
-            const int cy=663-static_cast<int>(flight_.at(t).altitude/hmax*33);
-            if(i)c.line(px,py,cx,cy,cyan,2);
-            px=cx;py=cy;
+void App::click(int x,int y) {
+    if(x<0 || x>=1280 || y<0 || y>=720)return;
+    if(confirmDiscard_) {
+        if(y>=420 && y<458) {
+            if(x>=354 && x<475)discardFocus_=0;
+            else if(x>=488 && x<700)discardFocus_=1;
+            else if(x>=714 && x<926)discardFocus_=2;
+            else return;
+            action(Action::Confirm);
+        } else if(x<330 || x>=950 || y<214 || y>=480)action(Action::Back);
+        return;
+    }
+    if(editing_) {commitEdit();if(editing_)return;}
+    if(helpMode_) {
+        if(x>=841 && x<911 && y>=163 && y<196)helpMode_=0;
+        return;
+    }
+    if(menuOpen_) {
+        for(int i=0;i<5;++i) {
+            const auto& menu=workbench::menus[i];
+            if(y>=workbench::menuY && y<workbench::menuY+workbench::menuH &&
+               x>=menu.x && x<menu.x+menu.w) {
+                if(menuIndex_==i)menuOpen_=false;
+                else {menuIndex_=i;menuItem_=0;}
+                return;
+            }
         }
-        const int cur=369+static_cast<int>(std::clamp(simTime_/tmax,0.0,1.0)*660);
-        c.line(cur,625,cur,667,orange);
-        smallLabel(c,37,642,fmt("TIME  %.1f s",simTime_),ink);
-        smallLabel(c,1062,647,fmt("MAX G  %.1f",flight_.maxG),ink);
-    } else {
-        smallLabel(c,37,648,status_,ink);
-        if(page_==Page::Garage) {
-            const auto mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
-            smallLabel(c,680,638,fmt("CG   %.3f m",mass.cgFromTail),cyan);
-            smallLabel(c,997,638,fmt("DRY   %.3f kg",mass.dry),soft);
+        const auto& menu=workbench::menus[menuIndex_];
+        if(x>=menu.x && x<menu.x+238 && y>=62 && y<62+menu.count*36) {
+            menuItem_=(y-62)/36;runMenuItem();return;
+        }
+        menuOpen_=false;
+        return;
+    }
+    if(y>=workbench::menuY && y<workbench::menuY+workbench::menuH) {
+        for(int i=0;i<5;++i) {
+            const auto& menu=workbench::menus[i];
+            if(x>=menu.x && x<menu.x+menu.w) {
+                menuIndex_=i;menuItem_=0;menuOpen_=true;focusRegion_=0;return;
+            }
         }
     }
-    c.rect(20,676,1240,1,stroke);
-    const char* instructions=page_==Page::Home?"X  NEW PROJECT     O  BACK":
-        page_==Page::Garage?"L1/R1  PART     UP/DOWN  FIELD     LEFT/RIGHT  EDIT     X  SIMULATE     []  SAVE     O  BACK":
-        page_==Page::Flight?"X  PAUSE     LEFT/RIGHT  SCRUB     TRIANGLE  GROUND LINK     O  GARAGE":
-        "TRIANGLE  GARAGE     USB DISCOVERY REQUIRES COMPATIBLE HARDWARE";
-    smallLabel(c,36,675,instructions,soft);
-    if(page_==Page::Garage || page_==Page::Flight)
-        smallLabel(c,1024,675,"R STICK  ORBIT",soft);
+    if(y>=workbench::toolbarY+5 && y<workbench::toolbarY+39) {
+        for(int i=0;i<10;++i) {
+            const auto& tool=workbench::tools[i];
+            if(x>=tool.x && x<tool.x+tool.w) {
+                toolbarFocus_=i;focusRegion_=1;action(tool.action);return;
+            }
+        }
+    }
+    if(x<workbench::treeW && y>=workbench::treeRowY &&
+       y<workbench::treeRowY+6*workbench::treeRowH) {
+        selectedPart_=(y-workbench::treeRowY)/workbench::treeRowH;
+        selectedField_=0;page_=Page::Garage;focusRegion_=2;playing_=false;
+        status_=std::string(workbench::partNames[selectedPart_])+" selected.";
+        return;
+    }
+    if(x>=workbench::inspectorX && y>=workbench::fieldY &&
+       y<workbench::fieldY+workbench::fieldH*fieldCount(selectedPart_) && page_==Page::Garage) {
+        selectedField_=(y-workbench::fieldY)/workbench::fieldH;
+        focusRegion_=3;
+        if((y-workbench::fieldY)%workbench::fieldH>=19) {
+            if(x>=workbench::inputX && x<workbench::inputX+28)editField(-1);
+            else if(x>=workbench::inputX+workbench::inputW-28 &&
+                    x<workbench::inputX+workbench::inputW)editField(1);
+            else if(x>=workbench::inputX && x<workbench::inputX+workbench::inputW)beginEdit();
+        }
+        return;
+    }
+    if(x>=workbench::inspectorX+16 && x<1264 && y>=635 && y<669) {
+        focusRegion_=5;
+        action(page_==Page::Garage?Action::ResetPart:Action::Garage);
+        return;
+    }
+    if(page_!=Page::Ground && x>=314 && x<=919 && y>=604 && y<=660 &&
+       flight_.valid && !flight_.samples.empty()) {
+        simTime_=std::clamp((x-314)/605.0,0.0,1.0)*flight_.samples.back().time;
+        page_=Page::Flight;
+        playing_=false;focusRegion_=4;status_="Flight cursor set from timeline.";
+    }
+}
+void App::hover(int x,int y) {
+    hoverX_=x>=0 && x<1280?x:-1;
+    hoverY_=y>=0 && y<720?y:-1;
+}
+void App::wheel(int x,int y,int direction) {
+    if(editing_) {commitEdit();if(editing_)return;}
+    if(menuOpen_ || helpMode_ || confirmDiscard_)return;
+    if(x>=workbench::viewX && x<workbench::inspectorX &&
+       y>=workbench::viewY && y<workbench::analysisY) {
+        zoom_=std::clamp(zoom_+(direction>0?0.1:-0.1),0.65,1.65);
+        status_="Viewport zoom changed.";
+    } else if(x>=workbench::inspectorX && page_==Page::Garage) {
+        selectedField_=(selectedField_+(direction<0?1:fieldCount(selectedPart_)-1))%
+            fieldCount(selectedPart_);
+        focusRegion_=3;
+    }
 }
 
-void App::draw(Canvas& c,double now) const {
-    drawChrome(c);
-    if(page_==Page::Home) drawHome(c);
-    else {
-        const auto sample=flight_.at(simTime_);
-        const bool inFlight=page_==Page::Flight && flight_.valid;
-        const double remaining=inFlight?std::clamp(sample.propellantRemaining,0.0,motor().propellantKg):
-            motor().propellantKg;
-        const double motorMass=motor().loadedKg-(motor().propellantKg-remaining);
-        const MassProperties mass=massProperties(rocket_,motorMass,remaining);
-        RocketView view;
-        view.x=276;view.y=102;view.w=624;view.h=482;
-        view.flight=inFlight;
-        view.altitude=view.flight?sample.altitude:0;
-        view.thrust=view.flight?sample.thrust:0;
-        view.canopyOpen=view.flight && rocket_.parachuteDiameter>0 &&
-            simTime_>flight_.apogeeTime && sample.altitude>0;
-        view.yaw=0.60+std::sin(now*0.36)*0.18+yawOffset_;
-        view.pitch=0.12+pitchOffset_;
-        view.selected=selectedPart_;
-        drawRocketView(c,rocket_,mass,view);
-        if(page_==Page::Garage) {
-            badge(c,296,524,"MODEL / EDIT MODE",cyan,rgb(27,56,57),212);
-        } else if(page_==Page::Ground) {
-            badge(c,296,524,"NO LIVE FLIGHT DATA",orange,rgb(61,44,37),247);
+void App::demoAt(double seconds) {
+    const int stage=seconds<6?0:seconds<12?1:seconds<18?2:seconds<26?3:
+        seconds<34?4:seconds<44?5:seconds<73?6:7;
+    if(stage!=demoStage_) {
+        demoStage_=stage;
+        rocket_=Rocket{};
+        if(stage>=1) {rocket_.material=Material::CarbonLaminate;rocket_.bodyDensity=1500;}
+        if(stage>=2) {rocket_.noseProfile=NoseProfile::TangentOgive;rocket_.noseLength=0.115;}
+        if(stage>=3) {
+            rocket_.finCount=4;rocket_.finSpan=0.058;
+            rocket_.finTipChord=0.047;rocket_.finSweep=0.018;
         }
+        if(stage>=4) {rocket_.electronicsMass=0.023;rocket_.electronicsFromTail=0.190;}
+        if(stage>=5) {rocket_.motorIndex=1;rocket_.mountLength=0.09;
+            rocket_.motorFromTail=0.043;rocket_.parachuteDiameter=0.42;
+            rocket_.canopyCd=1.35;}
+        selectedPart_=stage==0?0:stage==1?0:stage==2?1:stage==3?2:
+            stage==4?3:stage==5?5:4;
+        selectedField_=stage==1?3:stage==2?1:stage==3?0:stage==4?0:0;
+        page_=stage==6?Page::Flight:stage==7?Page::Ground:Page::Garage;
+        dirty_=stage>0;saved_=false;hasUndo_=false;playing_=false;
+        rebuild();
+        status_=stage==0?"Assembly workspace. Choose any property to edit.":
+            stage==1?"Body: material and density update the mass model.":
+            stage==2?"Nose: tangent ogive affects the mesh and shell mass.":
+            stage==3?"Fin set: count and planform are editable.":
+            stage==4?"Avionics: move the mass to change the CG.":
+            stage==5?"Motor and recovery settings update the flight model.":
+            stage==6?"Time-compressed host replay of a calculated flight.":
+            "USB discovery only; there is no live telemetry.";
     }
-    drawSidebar(c);
-    drawInspector(c,now);
-    drawFooter(c);
+    demoMode_=true;
+    if(stage==6 && flight_.valid && !flight_.samples.empty()) {
+        const double progress=std::clamp((seconds-44)/29.0,0.0,1.0);
+        const double end=flight_.samples.back().time;
+        simTime_=progress<0.42?flight_.apogeeTime*progress/0.42:
+            flight_.apogeeTime+(end-flight_.apogeeTime)*(progress-0.42)/0.58;
+    }
 }
 } // namespace eulo

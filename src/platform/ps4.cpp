@@ -94,22 +94,18 @@ void control(eulo::App& app,uint32_t pressed) {
     if(pressed&ORBIS_PAD_BUTTON_CIRCLE) app.action(eulo::Action::Back);
     if(pressed&ORBIS_PAD_BUTTON_L1) app.action(eulo::Action::PrevPart);
     if(pressed&ORBIS_PAD_BUTTON_R1) app.action(eulo::Action::NextPart);
-    if(pressed&ORBIS_PAD_BUTTON_UP) app.action(eulo::Action::PrevField);
-    if(pressed&ORBIS_PAD_BUTTON_DOWN) app.action(eulo::Action::NextField);
-    if(pressed&ORBIS_PAD_BUTTON_LEFT) app.action(eulo::Action::Decrease);
-    if(pressed&ORBIS_PAD_BUTTON_RIGHT) app.action(eulo::Action::Increase);
+    if(pressed&ORBIS_PAD_BUTTON_L2) app.action(eulo::Action::FocusPrevious);
+    if(pressed&ORBIS_PAD_BUTTON_R2) app.action(eulo::Action::FocusNext);
+    if(pressed&ORBIS_PAD_BUTTON_UP) app.key("ArrowUp");
+    if(pressed&ORBIS_PAD_BUTTON_DOWN) app.key("ArrowDown");
+    if(pressed&ORBIS_PAD_BUTTON_LEFT) app.key("ArrowLeft");
+    if(pressed&ORBIS_PAD_BUTTON_RIGHT) app.key("ArrowRight");
     if(pressed&ORBIS_PAD_BUTTON_SQUARE) app.action(eulo::Action::Save);
-    if(pressed&ORBIS_PAD_BUTTON_OPTIONS) app.action(eulo::Action::Load);
+    if(pressed&ORBIS_PAD_BUTTON_OPTIONS) app.action(eulo::Action::Menu);
+    if(pressed&ORBIS_PAD_BUTTON_R3) app.action(eulo::Action::FitView);
     if(pressed&ORBIS_PAD_BUTTON_TRIANGLE)
         app.action(app.page()==eulo::Page::Ground?eulo::Action::Garage:eulo::Action::Ground);
-    if(pressed&ORBIS_PAD_BUTTON_CROSS) {
-        switch(app.page()) {
-            case eulo::Page::Home: app.action(eulo::Action::NewProject);break;
-            case eulo::Page::Garage: app.action(eulo::Action::Flight);break;
-            case eulo::Page::Flight: app.action(eulo::Action::TogglePlay);break;
-            case eulo::Page::Ground: app.action(eulo::Action::Garage);break;
-        }
-    }
+    if(pressed&ORBIS_PAD_BUTTON_CROSS) app.action(eulo::Action::Confirm);
 }
 } // namespace
 
@@ -117,6 +113,10 @@ int main() {
     eulo::App app;
     if(!app.init("/app0/assets/font-atlas.bin","/app0/assets/motors",
                  "/data/eulolab/project.ini"))return 1;
+    // The console has a controller but no text-entry backend in this build.
+    // Numeric values step on X or the D-pad rather than opening a dead textbox.
+    app.setTextEntryAvailable(false);
+    app.setRuntimeLabel("ORBIS BUILD / MODEL ONLY");
     if(mkdir("/data/eulolab",0755)<0 && errno!=EEXIST) {
         // Simulation still works even if sandbox policy forbids local storage.
     }

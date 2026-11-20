@@ -16,6 +16,9 @@ struct FlightResult {
     bool valid = false, landed = false;
     FlightSample at(double time) const;
 };
+// Catalog motor must fit inside the editable internal sleeve, with its whole
+// casing between the tail datum and the top of the mount.
+bool motorFits(const Rocket& rocket,const MotorCurve& motor);
 FlightResult simulate(const Rocket& rocket, const MotorCurve& motor,
                       double initialAltitude = 0.0);
 }  // namespace eulo

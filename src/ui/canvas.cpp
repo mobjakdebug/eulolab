@@ -41,14 +41,22 @@ const unsigned char* FontAtlas::glyph(int code, int style, int* advance) const {
     return data.data() + i + 1;
 }
 
-void Canvas::pixel(int x, int y, uint32_t color) {
-    if (x >= 0 && y >= 0 && x < w_ && y < h_) pixels_[y*w_ + x] = color;
+void Canvas::setClip(int x,int y,int w,int h) {
+    clipL_=std::clamp(x,0,w_);clipT_=std::clamp(y,0,h_);
+    clipR_=std::clamp(x+w,clipL_,w_);clipB_=std::clamp(y+h,clipT_,h_);
 }
-void Canvas::clear(uint32_t color) { std::fill(pixels_, pixels_ + w_*h_, color); }
+void Canvas::resetClip() {clipL_=clipT_=0;clipR_=w_;clipB_=h_;}
+void Canvas::pixel(int x, int y, uint32_t color) {
+    if (x >= clipL_ && y >= clipT_ && x < clipR_ && y < clipB_)
+        pixels_[y*w_ + x] = color;
+}
+void Canvas::clear(uint32_t color) {
+    resetClip();std::fill(pixels_, pixels_ + w_*h_, color);
+}
 void Canvas::rect(int x, int y, int w, int h, uint32_t color) {
     if (w <= 0 || h <= 0) return;
-    const int l = std::max(0, x), t = std::max(0, y);
-    const int r = std::min(w_, x+w), b = std::min(h_, y+h);
+    const int l = std::max(clipL_, x), t = std::max(clipT_, y);
+    const int r = std::min(clipR_, x+w), b = std::min(clipB_, y+h);
     if (r <= l || b <= t) return; // fully outside the framebuffer
     for (int py=t; py<b; ++py) std::fill(pixels_ + py*w_ + l, pixels_ + py*w_ + r, color);
 }
@@ -103,10 +111,10 @@ void Canvas::ring(int cx,int cy,int radius,int thickness,uint32_t color) {
     }
 }
 void Canvas::triangle(int ax,int ay,int bx,int by,int cx,int cy,uint32_t color) {
-    const int minx=std::max(0,std::min({ax,bx,cx}));
-    const int maxx=std::min(w_-1,std::max({ax,bx,cx}));
-    const int miny=std::max(0,std::min({ay,by,cy}));
-    const int maxy=std::min(h_-1,std::max({ay,by,cy}));
+    const int minx=std::max(clipL_,std::min({ax,bx,cx}));
+    const int maxx=std::min(clipR_-1,std::max({ax,bx,cx}));
+    const int miny=std::max(clipT_,std::min({ay,by,cy}));
+    const int maxy=std::min(clipB_-1,std::max({ay,by,cy}));
     const auto edge=[](int ax,int ay,int bx,int by,int x,int y){
         return (x-ax)*(by-ay)-(y-ay)*(bx-ax);
     };
@@ -134,13 +142,14 @@ void Canvas::text(int x,int y,const std::string& value,uint32_t color,int style,
         const unsigned char* glyph=font_.glyph(c,style,&adv);
         if(!glyph) continue;
         if(x+adv>start+maxWidth) break;
-        if(x+s.cellW>0 && x<w_ && y+s.cellH>0 && y<h_) {
+        if(x+static_cast<int>(s.cellW)>clipL_ && x<clipR_ &&
+           y+static_cast<int>(s.cellH)>clipT_ && y<clipB_) {
             for(unsigned gy=0;gy<s.cellH;++gy) {
                 const int py=y+static_cast<int>(gy);
-                if(py<0 || py>=h_) continue;
+                if(py<clipT_ || py>=clipB_) continue;
                 for(unsigned gx=0;gx<s.cellW;++gx) {
                     const int px=x+static_cast<int>(gx);
-                    if(px<0 || px>=w_) continue;
+                    if(px<clipL_ || px>=clipR_) continue;
                     const unsigned alpha=glyph[gy*s.cellW+gx];
                     if(!alpha || gx>static_cast<unsigned>(adv+2)) continue;
                     uint32_t& old=pixels_[py*w_+px];

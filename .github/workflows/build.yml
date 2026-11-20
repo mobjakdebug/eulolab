@@ -17,10 +17,10 @@ jobs:
       - uses: actions/checkout@v5
       - name: Build actual shared UI and run core/UI tests
         run: make -j2 all test
-      - name: Render frames from the running host program
+      - name: Render workbench and modelled descent from the running host app
         run: |
-          ./out/eulolab-host --screenshot out/assembly.ppm 42
-          ./out/eulolab-host --screenshot out/descent.ppm 60
+          ./out/eulolab-host --screenshot out/assembly.ppm 22
+          ./out/eulolab-host --screenshot out/descent.ppm 65
           test "$(head -n 1 out/assembly.ppm)" = P6
           test "$(head -n 1 out/descent.ppm)" = P6
       - uses: actions/upload-artifact@v7

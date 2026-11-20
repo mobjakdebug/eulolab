@@ -1,9 +1,9 @@
 CXX ?= g++
 CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra -Wpedantic -Isrc
 CORE = src/core/rocket.cpp src/core/motor.cpp src/core/flight.cpp
-UI = src/ui/canvas.cpp src/ui/rocket_view.cpp src/ui/app.cpp
+UI = src/ui/canvas.cpp src/ui/rocket_view.cpp src/ui/app.cpp src/ui/app_draw.cpp
 HEADERS = $(wildcard src/core/*.hpp src/ui/*.hpp)
-.PHONY: all test ps4 video clean
+.PHONY: all test preview ps4 video clean
 all: out/eulolab-host
 
 out:
@@ -18,10 +18,13 @@ out/core-tests: $(CORE) $(HEADERS) tests/core_tests.cpp | out
 out/ui-tests: $(CORE) $(UI) $(HEADERS) tests/ui_tests.cpp assets/font-atlas.bin | out
 	$(CXX) $(CXXFLAGS) $(CORE) $(UI) tests/ui_tests.cpp -o $@
 
-test: out/core-tests out/ui-tests
+test: out/eulolab-host out/core-tests out/ui-tests
 	./out/core-tests
 	./out/ui-tests
 	python3 -m unittest discover -s tests -p '*_test.py'
+
+preview: out/eulolab-host
+	python3 tools/host_preview.py --port $(if $(PORT),$(PORT),8000)
 
 ps4:
 	$(MAKE) -C ps4 pkg

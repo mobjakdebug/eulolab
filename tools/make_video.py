@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Record real pixels produced by the C++ App on a host, NOT by a PS4.
 
-The deterministic demonstration uses the same App::action, shared renderer,
-commercial .eng data, and simulation as the native PS4 frontend. The program
-itself displays HOST REPLAY in every frame. This is a scripted host recording,
-NOT footage captured from Orbis hardware or a physical rocket launch.
+The deterministic scenario changes the real C++ Rocket model through the
+host demo sequencer and displays the shared C++ renderer and physics, including
+published commercial .eng curves. The program itself marks each frame HOST
+REPLAY. This is not footage of Orbis hardware or a physical rocket launch.
 """
 import os
 from pathlib import Path
