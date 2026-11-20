@@ -1,4 +1,4 @@
-# Cross-build a REAL OpenOrbis PS4 eboot.bin and installable PKG.
+# Cross-build an OpenOrbis PS4 eboot.bin and PKG candidate (console-untested).
 # Use the pinned OpenOrbis v0.5.4 release; do not put SDK binaries in Git.
 ROOT := $(abspath ..)
 SDK := $(OO_PS4_TOOLCHAIN)
