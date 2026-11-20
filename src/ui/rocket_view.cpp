@@ -58,11 +58,14 @@ void drawRocketView(Canvas& c,const Rocket& rocket,const MassProperties& mass,co
     const double scale=std::min(v.flight?440.0:730.0,
         static_cast<double>(v.h-140)/(rocket.bodyLength+rocket.noseLength));
     const double cs=std::cos(v.yaw),sn=std::sin(v.yaw);
+    const double cp=std::cos(v.pitch),sp=std::sin(v.pitch);
     auto project=[&](Point3 p)->Screen {
         const double side=p.x*cs+p.z*sn;
-        const double depth=-p.x*sn+p.z*cs;
+        const double forward=-p.x*sn+p.z*cs;
+        const double height=p.y*cp+forward*sp;
+        const double depth=forward*cp-p.y*sp;
         return {center+static_cast<int>(side*scale),
-                rocketBase-static_cast<int>((p.y+depth*0.12)*scale),depth};
+                rocketBase-static_cast<int>(height*scale),depth};
     };
     std::vector<Face> faces;
     faces.reserve(256);

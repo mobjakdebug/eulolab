@@ -8,7 +8,9 @@
 #include <orbis/UserService.h>
 #include <orbis/Sysmodule.h>
 #include <orbis/Usbd.h>
+#include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -140,6 +142,13 @@ int main() {
             OrbisPadData state{};
             if(scePadReadState(pad,&state)>=0 && state.connected) {
                 control(app,state.buttons & ~previous);
+                const auto stick=[](uint8_t raw) {
+                    const double value=(static_cast<int>(raw)-128)/127.0;
+                    return std::abs(value)<0.16?0.0:value;
+                };
+                const double step=std::clamp(dt,0.0,0.05)*2.0;
+                app.orbit(stick(state.rightStick.x)*step,
+                          -stick(state.rightStick.y)*step);
                 previous=state.buttons;
             } else previous=0;
         }

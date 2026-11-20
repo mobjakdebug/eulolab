@@ -17,6 +17,7 @@ public:
     void draw(Canvas& c, double now) const;
     void action(Action a);
     void tick(double seconds);
+    void orbit(double yawRadians, double pitchRadians); // right-stick 3D orbit
     void demoAt(double seconds); // drives the real app for reproducible footage
     const FontAtlas& font() const { return font_; }
     Page page() const { return page_; }
@@ -31,6 +32,8 @@ private:
     int selectedPart_ = 0;
     int selectedField_ = 0;
     double simTime_ = 0;
+    double yawOffset_ = 0.0;
+    double pitchOffset_ = 0.0;
     bool playing_ = false;
     std::string projectPath_;
     std::string status_ = "Create a project to begin.";

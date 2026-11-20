@@ -116,6 +116,11 @@ void App::tick(double seconds) {
     simTime_+=std::clamp(seconds,0.0,0.1);
     if(simTime_>flight_.samples.back().time) {simTime_=flight_.samples.back().time;playing_=false;}
 }
+void App::orbit(double yawRadians,double pitchRadians) {
+    if(page_==Page::Home || !std::isfinite(yawRadians) || !std::isfinite(pitchRadians))return;
+    yawOffset_=std::remainder(yawOffset_+std::clamp(yawRadians,-0.15,0.15),6.283185307179586);
+    pitchOffset_=std::clamp(pitchOffset_+std::clamp(pitchRadians,-0.15,0.15),-0.35,0.35);
+}
 void App::demoAt(double seconds) {
     // Deterministic HOST recording of the actual App actions. Replaying from
     // a fresh project makes standalone screenshots agree with the full video.
@@ -367,6 +372,8 @@ void App::drawFooter(Canvas& c) const {
         page_==Page::Flight?"X  PAUSE     LEFT/RIGHT  SCRUB     TRIANGLE  GROUND LINK     O  GARAGE":
         "TRIANGLE  GARAGE     USB DISCOVERY REQUIRES COMPATIBLE HARDWARE";
     smallLabel(c,36,675,instructions,soft);
+    if(page_==Page::Garage || page_==Page::Flight)
+        smallLabel(c,1024,675,"R STICK  ORBIT",soft);
 }
 
 void App::draw(Canvas& c,double now) const {
@@ -382,7 +389,8 @@ void App::draw(Canvas& c,double now) const {
         view.thrust=view.flight?sample.thrust:0;
         view.canopyOpen=view.flight && rocket_.parachuteDiameter>0 &&
             simTime_>flight_.apogeeTime && sample.altitude>0;
-        view.yaw=0.60+std::sin(now*0.36)*0.18;
+        view.yaw=0.60+std::sin(now*0.36)*0.18+yawOffset_;
+        view.pitch=0.12+pitchOffset_;
         view.selected=selectedPart_;
         drawRocketView(c,rocket_,mass,view);
         if(page_==Page::Garage) {

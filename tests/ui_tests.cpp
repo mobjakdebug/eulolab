@@ -50,6 +50,11 @@ int main() {
     assert(app.page()==Page::Ground);
     app.action(Action::Back);
     assert(app.page()==Page::Garage);
+    app.draw(canvas,10);
+    const auto beforeOrbit=bytes;
+    app.orbit(0.8,0.2);
+    app.draw(canvas,10);
+    assert(beforeOrbit!=bytes && bytes.front()==guard && bytes.back()==guard);
     std::remove("out/ui-project.ini");
     std::puts("PASS UI: scripted host rendering, guard pixels, pad actions, save/load, and navigation");
 }
