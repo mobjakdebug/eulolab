@@ -19,7 +19,7 @@ OBJ := $(addprefix $(OUT)/obj/,$(SRC:.cpp=.o))
 # vasprintf); gnu++17 retains the feature macros that its own samples use.
 FLAGS := --target=x86_64-pc-freebsd12-elf -std=gnu++17 \
   -O2 -fPIC -funwind-tables -isysroot $(SDK) -isystem $(SDK)/include \
-  -isystem $(SDK)/include/c++/v1 -I$(ROOT)/src
+  -isystem $(SDK)/include/c++/v1 -I$(ROOT)/ps4/include -I$(ROOT)/src
 LIBS := -lc -lkernel -lc++ -lSceVideoOut -lScePad -lSceUserService -lSceSysmodule -lSceUsbd
 .PHONY: eboot pkg clean
 
