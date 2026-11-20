@@ -2,7 +2,7 @@ name: Native PS4 and host verification
 
 on:
   push:
-    branches: ['arena/05a9f626-eulolab']
+    branches: ['main']
   pull_request:
     branches: ['main']
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
   host-tests:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build actual shared UI and run core/UI tests
         run: make -j2 all test
       - name: Render frames from the running host program
@@ -23,7 +23,7 @@ jobs:
           ./out/eulolab-host --screenshot out/descent.ppm 60
           test "$(head -n 1 out/assembly.ppm)" = P6
           test "$(head -n 1 out/descent.ppm)" = P6
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: host-renders-ppm
           path: out/*.ppm
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install LLVM 18 cross-compiler and linker
         run: sudo apt-get update && sudo apt-get install -y clang-18 lld-18
       - name: Retrieve pinned official OpenOrbis v0.5.4 SDK
@@ -56,12 +56,15 @@ jobs:
         run: |
           set -o pipefail
           if ! make ps4 2>&1 | tee "$RUNNER_TEMP/ps4-build.log"; then
-            { grep -E '(error:|fatal error:|undefined symbol:|No rule to make target|Error [0-9]|cannot find)' "$RUNNER_TEMP/ps4-build.log" || true; } | head -n 12 | while IFS= read -r line; do
+            { grep -E '(error:|fatal error:|undefined symbol:|No rule to make target|Error [0-9]|cannot find|OpenSSL|libssl|Exception|Aborted)' "$RUNNER_TEMP/ps4-build.log" || true; } | head -n 10 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            tail -n 22 "$RUNNER_TEMP/ps4-build.log" | while IFS= read -r line; do
               echo "::error::$line"
             done
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: eulolab-ps4-homebrew-pkg-untested
           path: out/ps4/stage/*.pkg
