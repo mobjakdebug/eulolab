@@ -84,14 +84,21 @@ MassProperties massProperties(const Rocket& r, double motorMass, double propella
 
 bool saveProject(const Rocket& rocket, const char* path) {
     if (!rocket.valid() || !path) return false;
-    FILE* f = std::fopen(path, "wb");
+    // Write beside the project, then rename it. A failed or interrupted write
+    // must not truncate the user's previously saved design.
+    const std::string temporary = std::string(path) + ".tmp";
+    FILE* f = std::fopen(temporary.c_str(), "wb");
     if (!f) return false;
     const int count = std::fprintf(f, "EULOROCKET2\n%.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %d %d\n",
         rocket.bodyLength, rocket.radius, rocket.wall, rocket.noseLength,
         rocket.finSpan, rocket.electronicsMass, rocket.bodyDensity,
         rocket.parachuteDiameter, static_cast<int>(rocket.material), rocket.motorIndex);
     const int closeResult = std::fclose(f);
-    return count > 0 && closeResult == 0;
+    if (count <= 0 || closeResult != 0 || std::rename(temporary.c_str(),path) != 0) {
+        std::remove(temporary.c_str());
+        return false;
+    }
+    return true;
 }
 
 bool loadProject(Rocket& rocket, const char* path) {

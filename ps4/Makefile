@@ -15,8 +15,11 @@ STAGE := $(OUT)/stage
 CONTENT_ID := IV0000-BREW00242_00-EULOROCKETLAB001
 SRC := core/rocket.cpp core/motor.cpp core/flight.cpp ui/canvas.cpp ui/rocket_view.cpp ui/app.cpp platform/ps4.cpp
 OBJ := $(addprefix $(OUT)/obj/,$(SRC:.cpp=.o))
-FLAGS := --target=x86_64-pc-freebsd12-elf -std=c++17 -O2 -fPIC -funwind-tables \
-  -isysroot $(SDK) -isystem $(SDK)/include -isystem $(SDK)/include/c++/v1 -I$(ROOT)/src
+# The SDK's musl time.h hides nanosleep under strict C++17 unless POSIX is enabled;
+# its libc++ __threading_support header calls nanosleep from <pthread.h>.
+FLAGS := --target=x86_64-pc-freebsd12-elf -std=c++17 -D_POSIX_C_SOURCE=200809L \
+  -O2 -fPIC -funwind-tables -isysroot $(SDK) -isystem $(SDK)/include \
+  -isystem $(SDK)/include/c++/v1 -I$(ROOT)/src
 LIBS := -lc -lkernel -lc++ -lSceVideoOut -lScePad -lSceUserService -lSceSysmodule -lSceUsbd
 .PHONY: eboot pkg clean
 

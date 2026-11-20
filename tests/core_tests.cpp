@@ -51,6 +51,8 @@ int main() {
     rocket.motorIndex = 1;
     rocket.parachuteDiameter = .36;
     assert(saveProject(rocket, "out/test-project.ini"));
+    Rocket invalid=rocket; invalid.radius=0;
+    assert(!saveProject(invalid,"out/test-project.ini"));
     rocket.radius = 0.047;
     assert(loadProject(rocket, "out/test-project.ini"));
     assert(near(rocket.radius, 0.0125) && rocket.motorIndex==1 &&
