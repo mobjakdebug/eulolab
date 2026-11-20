@@ -51,6 +51,28 @@ jobs:
           sdk_root="$(dirname "$sdk_root")"
           echo "OO_PS4_TOOLCHAIN=$sdk_root" >> "$GITHUB_ENV"
           ls -ld "$sdk_root/bin/linux" "$sdk_root/lib"
+      # PkgTool.Core is a .NET Core 3 binary. Only its PKG cryptography needs
+      # OpenSSL 1.1; build it in an isolated temporary directory, NOT in /usr.
+      # This is a build-host dependency; it is not bundled inside the PS4 app.
+      - name: Build isolated OpenSSL 1.1 for legacy PkgTool.Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/openssl11-src"
+          url='https://codeload.github.com/openssl/openssl/tar.gz/e04bd3433fd84e1861bf258ea37928d9845e6a86'
+          curl --show-error -fL --retry 3 "$url" -o "$RUNNER_TEMP/openssl11.tar.gz"
+          echo "23c52cc22a7455b7fb260efa0804f4584ebbe08b66da231e22afbb026ea67b7c  $RUNNER_TEMP/openssl11.tar.gz" | sha256sum -c -
+          mkdir -p "$src" "$RUNNER_TEMP/openssl11-lib"
+          tar -xzf "$RUNNER_TEMP/openssl11.tar.gz" -C "$src" --strip-components=1
+          cd "$src"
+          ./config shared no-tests --prefix="$RUNNER_TEMP/openssl11-lib" > "$RUNNER_TEMP/openssl11-config.log" 2>&1
+          if ! make -j2 build_libs > "$RUNNER_TEMP/openssl11-build.log" 2>&1; then
+            tail -n 30 "$RUNNER_TEMP/openssl11-build.log"
+            exit 1
+          fi
+          cp -L libssl.so.1.1 libcrypto.so.1.1 "$RUNNER_TEMP/openssl11-lib/"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/openssl11-lib" >> "$GITHUB_ENV"
+          echo "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1" >> "$GITHUB_ENV"
       - name: Cross-compile PS4 ELF, create fSELF and package PKG
         shell: bash
         run: |
