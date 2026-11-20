@@ -1,0 +1,5 @@
+# Published commercial motor data (not propellant instructions)
+
+`Klima_C6.eng` and `Klima_D9.eng` contain the **unchanged data points and attribution** (with LF-normalized line endings) of the public-domain RASP thrust curves by Leo Nutz for OpenRocket, based on official Raketenmodellbau Klima GmbH manufacturer data (March 2014). Their first four comment lines record this attribution and public-domain dedication. Source: [OpenRocket's manual thrust curves](https://github.com/openrocket/openrocket/tree/master/core/resources-src/datafiles/thrustcurves/manual). License note: [directory README](https://github.com/openrocket/openrocket/blob/master/core/resources-src/datafiles/thrustcurves/manual/README.txt).
+
+These are **motor modelling data**, not instructions to manufacture propellant or assemble a motor. The program treats the curves as inputs to an educational 1D point-mass model. They do not validate a physical vehicle, recovery deployment, launch site, or flight safety. Check manufacturer documentation and applicable law independently; this project makes no safety claims.

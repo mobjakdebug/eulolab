@@ -1,0 +1,80 @@
+# Cross-build a REAL OpenOrbis PS4 eboot.bin and installable PKG.
+# Use the pinned OpenOrbis v0.5.4 release; do not put SDK binaries in Git.
+ROOT := $(abspath ..)
+SDK := $(OO_PS4_TOOLCHAIN)
+ifeq ($(strip $(SDK)),)
+$(error Set OO_PS4_TOOLCHAIN to the extracted OpenOrbis PS4 toolchain directory)
+endif
+CLANG ?= clang++-18
+LLD ?= ld.lld-18
+PKGTOOL := $(SDK)/bin/linux/PkgTool.Core
+FSELF := $(SDK)/bin/linux/create-fself
+GP4 := $(SDK)/bin/linux/create-gp4
+OUT := $(ROOT)/out/ps4
+STAGE := $(OUT)/stage
+CONTENT_ID := IV0000-BREW00242_00-EULOROCKETLAB001
+SRC := core/rocket.cpp core/motor.cpp core/flight.cpp ui/canvas.cpp ui/rocket_view.cpp ui/app.cpp platform/ps4.cpp
+OBJ := $(addprefix $(OUT)/obj/,$(SRC:.cpp=.o))
+FLAGS := --target=x86_64-pc-freebsd12-elf -std=c++17 -O2 -fPIC -funwind-tables \
+  -isysroot $(SDK) -isystem $(SDK)/include -isystem $(SDK)/include/c++/v1 -I$(ROOT)/src
+LIBS := -lc -lkernel -lc++ -lSceVideoOut -lScePad -lSceUserService -lSceSysmodule -lSceUsbd
+.PHONY: eboot pkg clean
+
+eboot: $(OUT)/eboot.bin
+
+$(OUT)/obj/%.o: $(ROOT)/src/%.cpp
+	@mkdir -p $(dir $@)
+	$(CLANG) $(FLAGS) -c $< -o $@
+
+$(OUT)/eulolab.elf: $(OBJ)
+	$(LLD) -m elf_x86_64 -pie --script $(SDK)/link.x --eh-frame-hdr \
+	  -L$(SDK)/lib $(OBJ) -o $@ $(LIBS) $(SDK)/lib/crt1.o
+
+$(OUT)/eboot.bin: $(OUT)/eulolab.elf
+	$(FSELF) -in=$< -out=$(OUT)/eulolab.oelf --eboot "$@" --paid 0x3800000000000011
+
+$(STAGE)/eboot.bin: $(OUT)/eboot.bin
+	@mkdir -p $(STAGE)
+	cp $< $@
+
+$(STAGE)/assets/font-atlas.bin: $(ROOT)/assets/font-atlas.bin
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(STAGE)/assets/motors/%.eng: $(ROOT)/assets/motors/%.eng
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(STAGE)/sce_sys/icon0.png: $(ROOT)/assets/icon0.png
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+# Provided with the OpenOrbis sample. Do not commit or redistribute SDK blobs.
+$(STAGE)/sce_sys/about/right.sprx: $(SDK)/samples/piglet/sce_sys/about/right.sprx
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(STAGE)/sce_sys/param.sfo:
+	@mkdir -p $(dir $@)
+	$(PKGTOOL) sfo_new $@
+	$(PKGTOOL) sfo_setentry $@ APP_TYPE --type Integer --maxsize 4 --value 1
+	$(PKGTOOL) sfo_setentry $@ APP_VER --type Utf8 --maxsize 8 --value 1.00
+	$(PKGTOOL) sfo_setentry $@ ATTRIBUTE --type Integer --maxsize 4 --value 0
+	$(PKGTOOL) sfo_setentry $@ CATEGORY --type Utf8 --maxsize 4 --value gd
+	$(PKGTOOL) sfo_setentry $@ CONTENT_ID --type Utf8 --maxsize 48 --value $(CONTENT_ID)
+	$(PKGTOOL) sfo_setentry $@ DOWNLOAD_DATA_SIZE --type Integer --maxsize 4 --value 0
+	$(PKGTOOL) sfo_setentry $@ SYSTEM_VER --type Integer --maxsize 4 --value 0
+	$(PKGTOOL) sfo_setentry $@ TITLE --type Utf8 --maxsize 128 --value 'EuloLab Rocket Studio'
+	$(PKGTOOL) sfo_setentry $@ TITLE_ID --type Utf8 --maxsize 12 --value BREW00242
+	$(PKGTOOL) sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value 1.00
+
+$(STAGE)/pkg.gp4: $(STAGE)/eboot.bin $(STAGE)/sce_sys/param.sfo $(STAGE)/sce_sys/icon0.png $(STAGE)/sce_sys/about/right.sprx $(STAGE)/assets/font-atlas.bin $(STAGE)/assets/motors/Klima_C6.eng $(STAGE)/assets/motors/Klima_D9.eng
+	cd $(STAGE) && $(GP4) -out pkg.gp4 --content-id=$(CONTENT_ID) \
+	  --files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/about/right.sprx assets/font-atlas.bin assets/motors/Klima_C6.eng assets/motors/Klima_D9.eng"
+
+pkg: $(STAGE)/pkg.gp4
+	cd $(STAGE) && $(PKGTOOL) pkg_build pkg.gp4 .
+	@ls -lh $(STAGE)/$(CONTENT_ID).pkg
+
+clean:
+	rm -rf $(OUT)

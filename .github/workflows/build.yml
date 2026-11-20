@@ -1,0 +1,60 @@
+name: Native PS4 and host verification
+
+on:
+  push:
+    branches: ['arena/05a9f626-eulolab']
+  pull_request:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build actual shared UI and run core/UI tests
+        run: make -j2 all test
+      - name: Render frames from the running host program
+        run: |
+          ./out/eulolab-host --screenshot out/assembly.ppm 42
+          ./out/eulolab-host --screenshot out/descent.ppm 60
+          test "$(head -n 1 out/assembly.ppm)" = P6
+          test "$(head -n 1 out/descent.ppm)" = P6
+      - uses: actions/upload-artifact@v4
+        with:
+          name: host-renders-ppm
+          path: out/*.ppm
+          retention-days: 7
+
+  ps4-pkg:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM 18 cross-compiler and linker
+        run: sudo apt-get update && sudo apt-get install -y clang-18 lld-18
+      - name: Retrieve pinned official OpenOrbis v0.5.4 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.4/toolchain-llvm-18.tar.gz'
+          curl -fL --retry 3 --retry-delay 3 "$url" -o "$RUNNER_TEMP/openorbis.tar.gz"
+          echo "3c7cd5bb593ca74fa1c13fd59f3938dc0fc07985167f7275063019e63abe4526  $RUNNER_TEMP/openorbis.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/openorbis"
+          tar -xzf "$RUNNER_TEMP/openorbis.tar.gz" -C "$RUNNER_TEMP/openorbis"
+          sdk_root="$(find "$RUNNER_TEMP/openorbis" -maxdepth 3 -name link.x -print -quit)"
+          test -n "$sdk_root"
+          sdk_root="$(dirname "$sdk_root")"
+          echo "OO_PS4_TOOLCHAIN=$sdk_root" >> "$GITHUB_ENV"
+          ls -lh "$sdk_root/bin/linux" "$sdk_root/lib" | head -35
+      - name: Cross-compile PS4 ELF, create fSELF and package PKG
+        run: make ps4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eulolab-ps4-homebrew-pkg-untested
+          path: out/ps4/stage/*.pkg
+          if-no-files-found: error
+          retention-days: 7
