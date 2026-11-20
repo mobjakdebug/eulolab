@@ -106,15 +106,48 @@ jobs:
             exit 1
           fi
           echo "::notice title=PKG validation::LibOrbisPkg reported no invalid hashes or signatures"
-          # Round-trip the built package and compare every GP4-declared payload.
-          # This tests the builder's filesystem, not whether a PS4 can run it.
-          if ! "$OO_PS4_TOOLCHAIN/bin/linux/PkgTool.Core" pkg_extract "$pkg" "$RUNNER_TEMP/eulolab-extracted" > package-extraction.log 2>&1; then
+          # Audit the PFS contents and the separately stored sce_sys PKG entries.
+          # This tests the builder's files, not whether a PS4 can run the app.
+          pkgtool="$OO_PS4_TOOLCHAIN/bin/linux/PkgTool.Core"
+          if ! "$pkgtool" pkg_extract "$pkg" "$RUNNER_TEMP/eulolab-extracted" > package-extraction.log 2>&1; then
             echo '::error title=PKG extraction::PkgTool.Core could not extract the built package'
             tail -n 18 package-extraction.log | while IFS= read -r line; do echo "::error title=PKG extraction::$line"; done
             exit 1
           fi
           echo '::notice title=PKG extraction::LibOrbisPkg extracted the built inner filesystem'
-          python3 - "$RUNNER_TEMP/eulolab-extracted" <<'PY'
+          if ! "$pkgtool" pkg_listentries "$pkg" > package-entries.txt 2>&1; then
+            echo '::error title=PKG metadata::Cannot list PKG entries'
+            exit 1
+          fi
+          # LibOrbisPkg moves known direct sce_sys files from PFS to PKG entries.
+          # pkg_listentries prints the zero-based index in column four.
+          sfo_index="$(awk '$NF == "PARAM_SFO" {print $4}' package-entries.txt)"
+          icon_index="$(awk '$NF == "ICON0_PNG" {print $4}' package-entries.txt)"
+          if [[ ! "$sfo_index" =~ ^[0-9]+$ || ! "$icon_index" =~ ^[0-9]+$ ]]; then
+            echo '::error title=PKG metadata::Missing PARAM_SFO or ICON0_PNG entry'
+            tail -n 16 package-entries.txt | while IFS= read -r line; do echo "::error title=PKG entries::$line"; done
+            exit 1
+          fi
+          if ! "$pkgtool" pkg_extractentry "$pkg" "$icon_index" "$RUNNER_TEMP/eulolab-icon0.png" ||
+             ! "$pkgtool" pkg_extractentry "$pkg" "$sfo_index" "$RUNNER_TEMP/eulolab-param.sfo"; then
+            echo '::error title=PKG metadata::Cannot extract icon or param.sfo entry'
+            exit 1
+          fi
+          if ! cmp -s sce_sys/icon0.png "$RUNNER_TEMP/eulolab-icon0.png"; then
+            echo '::error title=PKG metadata::Extracted icon0.png differs from the staged image'
+            exit 1
+          fi
+          # The builder intentionally adds PUBTOOLINFO/PUBTOOLVER to param.sfo,
+          # so validate its parsed identity instead of comparing it bytewise.
+          if ! "$pkgtool" sfo_listentries "$RUNNER_TEMP/eulolab-param.sfo" > package-parameters.txt 2>&1 ||
+             ! grep -Fq 'IV0000-BREW00242_00-EULOROCKETLAB001' package-parameters.txt ||
+             ! grep -Fq 'EuloLab Rocket Studio' package-parameters.txt; then
+            echo '::error title=PKG metadata::Extracted param.sfo has invalid identity'
+            tail -n 16 package-parameters.txt | while IFS= read -r line; do echo "::error title=PKG SFO::$line"; done
+            exit 1
+          fi
+          echo '::notice title=PKG metadata::icon0.png matched and param.sfo identity parsed'
+          python3 - "$RUNNER_TEMP/eulolab-extracted" "$RUNNER_TEMP/eulolab-param.sfo" "$RUNNER_TEMP/eulolab-icon0.png" <<'PY'
           from pathlib import Path
           import hashlib
           import sys
@@ -128,9 +161,12 @@ jobs:
           # LibOrbisPkg's pkg_extract preserves its internal /uroot directory.
           extracted = Path(sys.argv[1]) / 'uroot'
           entries = [e.get('targ_path') for e in ET.parse(stage / 'pkg.gp4').findall('./files/file')]
-          if not entries:
-              fail('No payloads in GP4')
-          for name in entries:
+          special = {'sce_sys/param.sfo': Path(sys.argv[2]),
+                     'sce_sys/icon0.png': Path(sys.argv[3])}
+          if not entries or not set(special).issubset(entries):
+              fail('GP4 does not declare the expected application files')
+          pfs_entries = [name for name in entries if name not in special]
+          for name in pfs_entries:
               try:
                   source = (stage / name).read_bytes()
                   actual = (extracted / name).read_bytes()
@@ -140,15 +176,17 @@ jobs:
                   fail(f'PKG payload mismatch: {name}')
           # LibOrbisPkg creates sce_sys/keystone when assembling app PKGs.
           found = {str(p.relative_to(extracted)) for p in extracted.rglob('*') if p.is_file()}
-          unexpected = found - set(entries) - {'sce_sys/keystone'}
-          if unexpected or set(entries) - found:
-              fail(f'Unexpected/missing extracted payloads: {unexpected}, {set(entries) - found}')
+          expected = set(pfs_entries) | {'sce_sys/keystone'}
+          if found != expected:
+              fail(f'Unexpected/missing PFS files: {found - expected}, {expected - found}')
+          packaged = {name: extracted / name for name in found}
+          packaged.update(special)
           with (stage / 'package-content.txt').open('w') as report:
-              for name in sorted(found):
-                  data = (extracted / name).read_bytes()
+              for name, path in sorted(packaged.items()):
+                  data = path.read_bytes()
                   report.write(f'{hashlib.sha256(data).hexdigest()}  {len(data):>8}  {name}\n')
-          print(f'::notice title=PKG filesystem contents::{", ".join(sorted(found))}')
-          print(f'::notice title=PKG round-trip::{len(entries)} GP4 files matched byte-for-byte; {len(found)} extracted files')
+          print(f'::notice title=PKG contents::{", ".join(sorted(packaged))}')
+          print(f'::notice title=PKG round-trip::{len(pfs_entries)} PFS files + icon matched; param.sfo parsed; {len(packaged)} total files')
           PY
           cat package-content.txt
           tail -n 8 package-validation.txt
@@ -159,6 +197,8 @@ jobs:
             out/ps4/stage/*.pkg
             out/ps4/stage/package.sha256
             out/ps4/stage/package-validation.txt
+            out/ps4/stage/package-entries.txt
+            out/ps4/stage/package-parameters.txt
             out/ps4/stage/package-content.txt
           if-no-files-found: error
           retention-days: 7
