@@ -121,6 +121,29 @@ void testEveryProperty() {
     assert(stepped.status().find("dependent geometry")!=std::string::npos);
     std::puts("PASS inspector: 32/32 editable properties, live model/render, limits and motor fit");
 }
+void testFocusNavigation() {
+    App app;
+    assert(app.init("assets/font-atlas.bin","assets/motors","out/focus-test.ini"));
+    const Rocket original=app.rocket();
+    for(int i=0;i<3;++i)app.key("Tab"); // inspector -> timeline -> button -> menu
+    app.key("ArrowRight"); // change selected top-level menu, not a property
+    assert(near(app.rocket().bodyLength,original.bodyLength));
+    app.key("ArrowDown");assert(app.menuOpen());
+    app.key("Escape");assert(!app.menuOpen());
+    for(int i=0;i<4;++i)app.key("Tab"); // toolbar -> tree -> inspector -> timeline
+    app.key("ArrowRight");
+    assert(app.page()==Page::Flight && app.status().find("cursor")!=std::string::npos);
+    assert(near(app.rocket().bodyLength,original.bodyLength));
+    app.key("Tab"); // focus bottom inspector button
+    app.key("ArrowRight");
+    assert(near(app.rocket().bodyLength,original.bodyLength));
+    app.key("Enter");assert(app.page()==Page::Garage);
+    for(int i=0;i<5;++i)app.key("Tab"); // inspector -> tree through the focus cycle
+    app.key("Enter"); // activating the tree moves focus to editable properties
+    app.key("ArrowRight");
+    assert(near(app.rocket().bodyLength,original.bodyLength+.01));
+    std::puts("PASS focus: menu/timeline/button navigation never mutates an unrelated property");
+}
 void testCommandsAndInput() {
     const char* file="out/ui-project.ini";
     std::remove(file);
@@ -279,6 +302,7 @@ void testReplay() {
 }
 int main() {
     testEveryProperty();
+    testFocusNavigation();
     testCommandsAndInput();
     testReplay();
 }

@@ -347,7 +347,8 @@ void App::action(Action a) {
     switch(a) {
         case Action::NewProject:
             rocket_=Rocket{};rebuild();page_=Page::Garage;selectedPart_=0;
-            selectedField_=0;simTime_=0;playing_=false;dirty_=false;saved_=false;hasUndo_=false;
+            selectedField_=0;focusRegion_=3;simTime_=0;playing_=false;
+            dirty_=false;saved_=false;hasUndo_=false;
             status_="New project. Select any component to edit.";break;
         case Action::Garage:page_=Page::Garage;focusRegion_=3;playing_=false;
             status_="Assembly workspace.";break;
@@ -373,14 +374,15 @@ void App::action(Action a) {
             focusRegion_=3;break;
         case Action::PrevField:selectedField_=(selectedField_+fieldCount(selectedPart_)-1)%fieldCount(selectedPart_);
             focusRegion_=3;break;
-        case Action::Increase:
-            if(page_==Page::Garage)editField(1);
-            else if(page_==Page::Flight && !flight_.samples.empty())
-                simTime_=std::min(flight_.samples.back().time,simTime_+.5);
-            break;
-        case Action::Decrease:
-            if(page_==Page::Garage)editField(-1);
-            else if(page_==Page::Flight)simTime_=std::max(0.0,simTime_-.5);
+        case Action::Increase:case Action::Decrease:
+            if(focusRegion_==4 && page_!=Page::Ground && flight_.valid &&
+               !flight_.samples.empty()) {
+                page_=Page::Flight;playing_=false;
+                const double step=a==Action::Increase?.5:-.5;
+                simTime_=std::clamp(simTime_+step,0.0,flight_.samples.back().time);
+                status_="Flight cursor set from timeline.";
+            } else if(focusRegion_==3 && page_==Page::Garage)
+                editField(a==Action::Increase?1:-1);
             break;
         case Action::TogglePlay:
             if(page_!=Page::Flight) {action(Action::Flight);break;}
@@ -394,7 +396,8 @@ void App::action(Action a) {
             break;
         case Action::Load:
             if(loadProject(rocket_,projectPath_.c_str())) {
-                rebuild();dirty_=false;saved_=true;page_=Page::Garage;playing_=false;
+                rebuild();dirty_=false;saved_=true;page_=Page::Garage;
+                focusRegion_=3;playing_=false;
                 status_=flight_.valid?"Project loaded.":"Project loaded; motor clearance invalid.";
             } else status_="Open failed: no valid saved project at this location.";
             break;
@@ -403,6 +406,10 @@ void App::action(Action a) {
             if(focusRegion_==3) {
                 if(page_==Page::Garage)beginEdit();
                 else action(Action::Garage);
+            }
+            else if(focusRegion_==2) {
+                focusRegion_=3;
+                status_=std::string("Editing ")+workbench::partNames[selectedPart_]+" properties.";
             }
             else if(focusRegion_==1)action(workbench::tools[toolbarFocus_].action);
             else if(focusRegion_==0)action(Action::Menu);
@@ -482,6 +489,21 @@ void App::key(const std::string& name,bool ctrl,bool shift) {
         else if(name=="ArrowDown")action(Action::NextField);
         else if(name=="Enter" || name==" ")action(Action::Confirm);
         return;
+    }
+    if(focusRegion_==0 && (name=="ArrowLeft" || name=="ArrowRight")) {
+        menuIndex_=(menuIndex_+(name=="ArrowLeft"?4:1))%5;
+        return;
+    }
+    if(focusRegion_==0 && (name=="ArrowUp" || name=="ArrowDown")) {
+        action(Action::Menu);return;
+    }
+    if(focusRegion_==4 && (name=="ArrowUp" || name=="ArrowDown")) {
+        focusRegion_=name=="ArrowUp"?3:5;return;
+    }
+    if(focusRegion_==5) {
+        if(name=="ArrowUp")action(Action::FocusPrevious);
+        else if(name=="ArrowDown")action(Action::FocusNext);
+        if(name.find("Arrow")==0)return; // focused button cannot edit a model field
     }
     if(name=="ArrowUp") {
         if(focusRegion_==2)action(Action::PrevPart);
