@@ -23,7 +23,7 @@ jobs:
           ./out/eulolab-host --screenshot out/descent.ppm 60
           test "$(head -n 1 out/assembly.ppm)" = P6
           test "$(head -n 1 out/descent.ppm)" = P6
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: host-renders-ppm
           path: out/*.ppm
@@ -190,7 +190,7 @@ jobs:
           PY
           cat package-content.txt
           tail -n 8 package-validation.txt
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: eulolab-ps4-homebrew-pkg-untested
           path: |
@@ -201,4 +201,4 @@ jobs:
             out/ps4/stage/package-parameters.txt
             out/ps4/stage/package-content.txt
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
