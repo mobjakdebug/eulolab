@@ -295,15 +295,15 @@ void App::drawInspector(Canvas& c) const {
         // The lower third of the inspector explains what these editable values
         // feed, rather than displaying a fictitious engineering pass/fail badge.
         const char* descriptions[][2] = {
-            {"Shell / density","Geometry updates mass and CG."},
-            {"Nose shell / profile","Profile affects shape and mass."},
-            {"Planform / placement","Fins must fit inside the tube."},
-            {"Avionics / point mass","Location shifts center of mass."},
-            {"Motor / internal sleeve","Klima curve: published, not fired."},
+            {"Shell / density","Model mass and CG update."},
+            {"Nose shell / profile","Shape/mass from profile."},
+            {"Planform / placement","Fins must fit the tube."},
+            {"Avionics / point mass","Location changes model CG."},
+            {"Motor / internal sleeve","Klima curve, not fired."},
             {"Idealised deployment","0 mm switches canopy off."},
-            {"Coaxial cylinder or tube","Enabled insert adds model mass."},
-            {"Open-loop scenario","Illustrative CP and fin forces."},
-            {"Visual comparison only","OBJ/STL is not mass or CAD solid."}
+            {"Coaxial cylinder or tube","Insert adds model mass."},
+            {"Open-loop scenario","CP and fin forces assumed."},
+            {"Visual comparison only","OBJ/STL: visual only."}
         };
         const int noteY=std::max(531,fieldY+fieldH*fieldCount(selectedPart_)+8);
         if(selectedPart_==2) {
@@ -385,7 +385,7 @@ void App::drawInspector(Canvas& c) const {
             c.text(inspectorX+16,202,"No sensor samples loaded",ink);
             c.text(inspectorX+16,242,"Record with the Arduino logger:",muted);
             c.text(inspectorX+16,273,"time_s,pressure_pa,...",ink,0,286);
-            c.text(inspectorX+16,304,"Legacy altitude CSV also accepted.",muted,0,286);
+            c.text(inspectorX+16,304,"Legacy altitude/gyro CSV",muted,0,286);
             c.rect(inspectorX+16,345,288,1,rule);
             c.text(inspectorX+16,568,"No measured values in the app.",ink);
             c.text(inspectorX+16,591,"Import your own recording.",muted);

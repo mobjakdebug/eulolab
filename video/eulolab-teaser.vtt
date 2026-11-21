@@ -1,33 +1,44 @@
 WEBVTT
 
-00:00:00.000 --> 00:00:03.000
-EuloLab. Shape the model. Read the flight.
-Native C++ host capture, not PS4 footage. Original instrumental score; no dialogue.
+00:00:00.000 --> 00:00:02.500
+EuloLab. Design inputs and recorded files.
+Native C++ host capture, not PS4 footage. Synthesized instrumental score; no dialogue.
 
-00:00:03.000 --> 00:00:04.500
-Design: change the part, see the model respond.
-52 editable properties across 9 sections.
+00:00:02.500 --> 00:00:04.000
+Design: edit geometry, log real fins.
+Design parameters and operator-entered fin readings are separate; this film contains no fin measurements.
 
-00:00:04.500 --> 00:00:09.667
-Actual host workbench: the inspector shows the body, nose and fin properties.
-The assembly and its calculated mass and trajectory figures change between shots.
+00:00:04.000 --> 00:00:08.250
+Native host workbench: body, nose and fin model fields respond to scripted illustrative edits.
+No physical rocket or measured fin dimensions appear.
 
-00:00:09.667 --> 00:00:11.333
-Flight: altitude is not the whole story.
-The educational open-loop model includes 3D position, attitude, ground range and Mach.
+00:00:08.250 --> 00:00:10.000
+Ground data: load a file. There is no bundled sensor recording.
+Pressure and IMU playback require an actual user-supplied CSV.
 
-00:00:11.333 --> 00:00:19.500
-Actual host renderer: a time-compressed calculated flight. The camera briefly crops
-into the native path and attitude view. Model only, not flight-rated or PS4 footage.
+00:00:10.000 --> 00:00:13.500
+Native host Ground page in its empty state. No sample data, sensor connection or GPS.
+An Arduino ESP32/STM32 recorder and optional LoRa roles compile, but have not been board-tested.
 
-00:00:19.500 --> 00:00:21.000
-USB bench: configure the link and keep it separate from flight.
-The profile is for compatible EuloBench/2 devices only.
+00:00:13.500 --> 00:00:15.250
+Flight: model a path, not a launch.
+Open-loop predictions are not real flight data or a safety result.
 
-00:00:21.000 --> 00:00:25.500
-Actual host workbench: USB profile, requested pins and manual command channels.
-No board is connected; these are not measurements of real servo travel.
+00:00:15.250 --> 00:00:22.500
+Native host-rendered, time-compressed model trajectory and attitude, including a labeled crop.
+It is not live telemetry, PS4 gameplay or footage of a physical flight.
 
-00:00:25.500 --> 00:00:30.000
-EuloLab. Build the model. Question the result.
-PS4 and servo hardware have not yet been tested. Live sensors and LoRa are not implemented.
+00:00:22.500 --> 00:00:24.000
+USB bench is manual and separate from Flight. No board is attached.
+The host preview has no USB bridge and cannot move a servo.
+
+00:00:24.000 --> 00:00:26.000
+Current native host view: EuloBench/2 USB profile editor, no device connected.
+These are requested settings, not a measured pinout or servo motion.
+
+00:00:26.000 --> 00:00:27.500
+Current native host view: disconnected manual channels. No movement was observed.
+
+00:00:27.500 --> 00:00:30.000
+Use your own records. Verify on hardware.
+Arduino ESP32/STM32 sketch is compile-only; PS4, sensors, RF and servo have no physical test.

@@ -3,7 +3,14 @@ CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra -Wpedantic -Isrc
 CORE = src/core/rocket.cpp src/core/motor.cpp src/core/flight.cpp src/core/telemetry.cpp src/core/fin_inspection.cpp src/core/mesh.cpp src/core/bench_profile.cpp src/core/bench_link.cpp
 UI = src/ui/canvas.cpp src/ui/rocket_view.cpp src/ui/app.cpp src/ui/app_draw.cpp
 HEADERS = $(wildcard src/core/*.hpp src/ui/*.hpp)
-.PHONY: all test preview ps4 video teaser clean
+# Pass tag names as environment values, never splice them into a shell command.
+ifneq ($(strip $(BASE)),)
+export RELEASE_BASE := $(BASE)
+endif
+ifneq ($(strip $(TAG)),)
+export RELEASE_TAG := $(TAG)
+endif
+.PHONY: all test preview ps4 video teaser release-media release-check clean
 all: out/eulolab-host
 
 out:
@@ -44,9 +51,21 @@ ps4:
 video: out/eulolab-host
 	python3 tools/make_video.py
 
-# 30-second editorial cut of real host frames; Pillow/numpy + ffmpeg required.
+# 30-second walkthrough of current native host states; never hardware footage.
 teaser: out/eulolab-host
 	python3 tools/make_teaser.py
+
+# Run on every release candidate after a human rewrite of README.md.
+# Media dependencies: .venv/bin/pip install -r requirements-media.txt
+release-media: out/eulolab-host
+	python3 tools/make_video.py
+	python3 tools/make_teaser.py
+	python3 tools/release_gate.py --write
+
+# BASE=<previous release tag> TAG=<planned tag> require a fresh README and
+# completed per-tag reviewer record. Without TAG this is automated QA only.
+release-check: test
+	python3 tools/release_gate.py --check
 
 clean:
 	rm -rf out

@@ -73,17 +73,27 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
-    // Sparse capture for editorial use. Each input line is a demo timestamp;
-    // each response is exactly one native BGRA framebuffer. No interpolated
-    // UI, fabricated telemetry or browser-rendered footage is introduced.
+    // Sparse capture for editorial use. A line is a demo timestamp or the
+    // literal BENCH/BENCH_SETUP. The latter render the *current* native UI
+    // with no BenchControl attached; no static screenshots or USB simulation.
+    // Each response is exactly one native BGRA framebuffer.
     if(argc==2 && std::strcmp(argv[1],"--demo-times")==0) {
         char line[80];
         while(std::fgets(line,sizeof(line),stdin)) {
-            char* end=nullptr;
-            const double time=std::strtod(line,&end);
-            if(end==line || (*end!='\n' && *end!='\0') ||
-               !std::isfinite(time) || time<0 || time>240) return 2;
-            app.demoAt(time);
+            double time=0;
+            if(std::strcmp(line,"BENCH\n")==0 ||
+               std::strcmp(line,"BENCH_SETUP\n")==0) {
+                const bool setup=std::strcmp(line,"BENCH_SETUP\n")==0;
+                app.demoAt(0);
+                app.action(eulo::Action::Bench);
+                if(setup)app.action(eulo::Action::BenchSetup);
+            } else {
+                char* end=nullptr;
+                time=std::strtod(line,&end);
+                if(end==line || (*end!='\n' && *end!='\0') ||
+                   !std::isfinite(time) || time<0 || time>240) return 2;
+                app.demoAt(time);
+            }
             app.draw(canvas,time);
             if(std::fwrite(pixels.data(),sizeof(uint32_t),pixels.size(),stdout)!=pixels.size() ||
                std::fflush(stdout)!=0)return 3;

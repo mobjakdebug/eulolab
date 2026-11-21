@@ -19,12 +19,16 @@ class HostPreviewTest(unittest.TestCase):
     def test_sparse_demo_frames_are_native_and_input_is_checked(self):
         root = Path(__file__).resolve().parents[1]
         host = root / 'out/eulolab-host'
-        frames = subprocess.run([str(host), '--demo-times'], input=b'22\n52\n',
+        frames = subprocess.run([str(host), '--demo-times'],
+                                input=b'22\n52\n75\nBENCH_SETUP\nBENCH\n',
                                 cwd=root, capture_output=True, check=True)
         frame_size = WIDTH * HEIGHT * 4
-        self.assertEqual(len(frames.stdout), 2 * frame_size)
-        self.assertNotEqual(frames.stdout[:frame_size], frames.stdout[frame_size:])
-        for invalid in (b'nan\n', b'-1\n', b'50xyz\n', b'241\n'):
+        self.assertEqual(len(frames.stdout), 5 * frame_size)
+        for i in range(4):
+            self.assertNotEqual(frames.stdout[i*frame_size:(i+1)*frame_size],
+                                frames.stdout[(i+1)*frame_size:(i+2)*frame_size])
+        for invalid in (b'nan\n', b'-1\n', b'50xyz\n', b'241\n',
+                        b'FAKE_SENSOR\n'):
             result = subprocess.run([str(host), '--demo-times'], input=invalid,
                                     cwd=root, capture_output=True)
             self.assertEqual(result.returncode, 2)

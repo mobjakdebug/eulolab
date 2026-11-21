@@ -1,0 +1,91 @@
+name: Release README and host media gate
+
+on:
+  push:
+    tags: ['**']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      previous_tag:
+        description: 'Previous release tag for a dry-run README comparison (optional)'
+        required: false
+        type: string
+
+# Tag pushes are the pre-publish gate; published releases are checked again.
+# This does not create a release or rewrite the README automatically: a person
+# must review the prose and films, signing docs/release-review.md for that tag.
+# GitHub still permits a manual release before CI finishes; do not trust its
+# assets until the matching tag AND published-release checks pass.
+permissions:
+  contents: write
+
+jobs:
+  release-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - name: Choose the preceding tag for the README and review comparisons
+        shell: bash
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+          INPUT_BASE: ${{ inputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          tag=''
+          if [[ "$GITHUB_EVENT_NAME" == release || "$GITHUB_EVENT_NAME" == push ]]; then
+            tag="$EVENT_TAG"
+            test -n "$tag"
+            git rev-parse --verify "$tag^{commit}" >/dev/null
+            test "$(git rev-parse HEAD)" = "$(git rev-parse "$tag^{commit}")"
+            base="$(git tag --merged HEAD --sort=-creatordate | grep -Fxv "$tag" | head -n 1 || true)"
+          else
+            base="$INPUT_BASE"
+          fi
+          if [[ -z "$base" ]]; then
+            base="$(git rev-list --max-parents=0 HEAD | head -n 1)"
+          fi
+          echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "::notice title=Release comparison::Previous tag/root: $base; current tag: ${tag:-manual dry run}"
+      - name: Isolated pinned media tools
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --no-input -r requirements-media.txt
+      - name: Test code, native media and human review at this tag
+        shell: bash
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          make -j2 release-check BASE="$RELEASE_BASE" TAG="$RELEASE_TAG"
+      - name: Recreate both host videos, poster and captions from this tag
+        shell: bash
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          make release-media
+          python3 tools/release_gate.py --check
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-host-media-and-readme
+          path: |
+            README.md
+            docs/release-review.md
+            docs/release-media.json
+            docs/teaser-poster.png
+            video/eulolab-host-replay.mp4
+            video/eulolab-teaser.mp4
+            video/eulolab-teaser.vtt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Replace published release assets with regenerated files
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$TAG" README.md docs/release-review.md \
+            docs/teaser-poster.png video/eulolab-host-replay.mp4 \
+            video/eulolab-teaser.mp4 video/eulolab-teaser.vtt --clobber
