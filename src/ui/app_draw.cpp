@@ -29,6 +29,13 @@ void thinRow(Canvas& c,int x,int y,int width,const std::string& label,
     rightText(c,x+width-12,y+6,value,ink);
     c.rect(x+11,y+35,width-22,1,rule);
 }
+void compactRow(Canvas& c,int x,int y,int width,const std::string& label,
+                const std::string& value,bool selected=false) {
+    if(selected)c.rect(x,y,width,29,accentPale);
+    c.text(x+11,y+2,label,muted,0,width/2+17);
+    rightText(c,x+width-12,y+2,value,ink);
+    c.rect(x+11,y+29,width-22,1,rule);
+}
 void sectionButton(Canvas& c,int x,int y,int w,const char* label,
                    bool focused,bool hovered=false) {
     c.rect(x,y,w,33,focused?accent:hovered?accentPale:chrome);
@@ -65,16 +72,19 @@ void App::drawChrome(Canvas& c) const {
 
     c.rect(0,toolbarY,1280,toolbarH,chrome);
     c.rect(0,toolbarY+toolbarH-1,1280,1,rule);
-    for(int i=0;i<10;++i) {
+    for(int i=0;i<11;++i) {
         const Tool& t=tools[i];
         const bool active=(t.action==Action::Garage && page_==Page::Garage) ||
             (t.action==Action::Flight && page_==Page::Flight) ||
-            (t.action==Action::Ground && page_==Page::Ground);
+            (t.action==Action::Ground && page_==Page::Ground) ||
+            (t.action==Action::Bench && page_==Page::Bench);
         const bool focused=focusRegion_==1 && i==toolbarFocus_;
         const bool over=hoverX_>=t.x && hoverX_<t.x+t.w &&
             hoverY_>=toolbarY+5 && hoverY_<toolbarY+39;
         const bool disabled=(t.action==Action::Undo && !hasUndo_) ||
-            ((t.action==Action::JumpApogee || t.action==Action::TogglePlay) && !flight_.valid);
+            (t.action==Action::JumpApogee && !flight_.valid) ||
+            (t.action==Action::TogglePlay &&
+             (page_==Page::Ground?recording_.samples.empty():!flight_.valid));
         c.rect(t.x,toolbarY+5,t.w,34,active||over?accentPale:surface);
         c.border(t.x,toolbarY+5,t.w,34,focused||over?accent:rule,focused?2:1);
         c.text(t.x+(t.w-c.textWidth(t.label))/2,toolbarY+10,t.label,
@@ -87,10 +97,63 @@ void App::drawTree(Canvas& c) const {
     using namespace workbench;
     c.rect(0,contentY,treeW,statusY-contentY,surface);
     c.rect(treeW-1,contentY,1,statusY-contentY,rule);
+    if(page_==Page::Bench) {
+        c.text(16,111,"USB bench",ink,1);
+        c.text(17,145,"One timed pulse / USB",muted);
+        c.rect(16,168,212,1,rule);
+        c.text(17,185,"Transport",ink);
+        c.text(17,222,bench_ && bench_->connected()?"Board identified":
+            "No board connected",bench_ && bench_->connected()?accent:muted);
+        c.text(17,259,bench_ && bench_->connected()?
+            bench_->physicalGate()?"Gate at handshake: enabled":
+                                   "Gate at handshake: open":"Gate: not checked",muted,0,211);
+        c.rect(16,305,212,1,rule);
+        c.text(17,319,"Configured hardware",ink);
+        c.text(17,355,usbStatus_,muted,0,211);
+        c.rect(16,416,212,1,rule);
+        c.text(17,430,"Separated from flight",ink);
+        c.text(17,469,"No model-driven output",muted);
+        c.text(17,504,"No live gyro / altitude",muted);
+        c.text(17,645,"Bench only / no radio",muted);
+        return;
+    }
+    if(page_==Page::Ground) {
+        c.text(16,111,"Data sources",ink,1);
+        c.text(17,144,"Recorded / not live",muted);
+        c.rect(15,163,treeW-31,1,rule);
+        c.text(17,176,"CSV recording",ink);
+        const size_t slash=recordingPath_.find_last_of('/');
+        const std::string filename=recordingPath_.substr(slash==std::string::npos?
+            0:slash+1);
+        c.text(17,207,filename,muted,0,211);
+        c.text(17,242,recording_.samples.empty()?"No file loaded":
+            std::to_string(recording_.samples.size())+" recorded samples",ink);
+        if(!recording_.samples.empty())
+            c.text(17,276,formatted(recording_.samples.back().time-
+                recording_.samples.front().time,1,"s duration"),muted);
+        c.rect(16,318,212,1,rule);
+        c.text(17,332,"Calibration",ink);
+        c.text(17,368,recording_.calibrated?"Stationary window set":
+            "Not calibrated",recording_.calibrated?accent:muted);
+        c.text(17,400,"Pose is relative",muted);
+        c.rect(16,439,212,1,rule);
+        c.text(17,452,"USB bench / separate",ink);
+        if(c.textWidth(usbStatus_)<=210)c.text(17,486,usbStatus_,muted);
+        else {
+            const size_t space=usbStatus_.find_last_of(' ',19);
+            const size_t split=space==std::string::npos?19:space;
+            c.text(17,480,usbStatus_.substr(0,split),muted,0,210);
+            c.text(17,503,usbStatus_.substr(split+1),muted,0,210);
+        }
+        c.text(17,538,"No live sensor stream",ink);
+        c.text(17,570,"Manual bench in View > Servo bench",muted,0,211);
+        c.text(17,644,"CSV not saved in .eul",muted,0,212);
+        return;
+    }
     c.text(16,111,"Assembly",ink,1);
-    c.text(17,144,"6 editable components",muted);
+    c.text(17,144,"7 parts + setup + mesh",muted,0,210);
     c.rect(15,163,treeW-31,1,rule);
-    for(int i=0;i<6;++i) {
+    for(int i=0;i<9;++i) {
         const int y=treeRowY+i*treeRowH;
         if(i==selectedPart_) {
             c.rect(0,y,treeW-1,treeRowH,accentPale);
@@ -98,9 +161,9 @@ void App::drawTree(Canvas& c) const {
         } else if(hoverX_>=0 && hoverX_<treeW && hoverY_>=y && hoverY_<y+treeRowH) {
             c.rect(0,y,treeW-1,treeRowH,rgb(234,240,242));
         }
-        c.text(17,y+8,"0"+std::to_string(i+1),i==selectedPart_?accent:muted);
-        c.text(53,y+2,partNames[i],i==selectedPart_?ink:dark);
-        c.text(53,y+26,partNotes[i],muted);
+        c.text(17,y+7,"0"+std::to_string(i+1),i==selectedPart_?accent:muted);
+        c.text(53,y+7,partNames[i],i==selectedPart_?ink:dark,0,153);
+        rightText(c,treeW-17,y+7,std::to_string(fieldCount(i)),muted);
         c.rect(17,y+treeRowH-1,treeW-33,1,rule);
     }
     if(focusRegion_==2 && !menuOpen_ && !helpMode_)
@@ -119,7 +182,32 @@ void App::drawInspector(Canvas& c) const {
     c.rect(inspectorX,contentY,320,statusY-contentY,surface);
     c.rect(inspectorX,contentY,1,statusY-contentY,rule);
     c.text(inspectorX+16,111,page_==Page::Garage?"Properties":
-        page_==Page::Flight?"Flight analysis":"USB diagnostics",ink,1);
+        page_==Page::Flight?"Flight analysis":
+        page_==Page::Bench?"Manual actuators":"Recorded sensors",ink,1);
+    if(page_==Page::Bench) {
+        constexpr const char* axisNames[]={"TVC pitch","TVC yaw","Fin A","Fin B"};
+        c.text(inspectorX+16,148,"USB / board-local watchdog",muted);
+        c.rect(inspectorX+16,171,288,1,rule);
+        compactRow(c,inspectorX+6,181,305,"Channel",axisNames[benchAxis_]);
+        compactRow(c,inspectorX+6,219,305,"Pulse","+/- 2 deg  /  150 ms");
+        compactRow(c,inspectorX+6,257,305,"Interlock",bench_ && bench_->connected()?
+            bench_->physicalGate()?"At handshake: on":"At handshake: off":
+                                   "Not checked");
+        const auto button=[&](int index,int x,int y,int w,const char* label) {
+            sectionButton(c,x,y,w,label,focusRegion_==5 && benchFocus_==index,
+                hoverX_>=x && hoverX_<x+w && hoverY_>=y && hoverY_<y+33);
+        };
+        button(0,976,318,288,"Connect / identify board");
+        button(1,976,359,288,"Disconnect / request neutral");
+        button(2,976,410,140,"Previous axis");
+        button(3,1124,410,140,"Next axis");
+        button(4,976,470,140,"Pulse -2 deg");
+        button(5,1124,470,140,"Pulse +2 deg");
+        button(6,976,530,288,"Request neutral");
+        c.text(976,584,"No link to flight controls.",muted);
+        c.text(976,618,"Independent power cut required.",muted);
+        return;
+    }
     if(page_==Page::Garage) {
         c.text(inspectorX+16,148,std::string("0")+std::to_string(selectedPart_+1)+
                "  /  "+partNames[selectedPart_],muted);
@@ -156,7 +244,10 @@ void App::drawInspector(Canvas& c) const {
             {"Planform / placement","Fins must fit inside the tube."},
             {"Avionics / point mass","Location shifts center of mass."},
             {"Motor / internal sleeve","Thrust data is read-only."},
-            {"Idealised deployment","0 mm switches canopy off."}
+            {"Idealised deployment","0 mm switches canopy off."},
+            {"Coaxial cylinder or tube","Built insert adds mass and inertia."},
+            {"Open-loop scenario","Illustrative CP and fin forces."},
+            {"Visual comparison only","OBJ/STL is not mass or CAD solid."}
         };
         const int noteY=std::max(566,fieldY+fieldH*fieldCount(selectedPart_)+8);
         c.text(inspectorX+16,noteY,descriptions[selectedPart_][0],ink);
@@ -169,6 +260,16 @@ void App::drawInspector(Canvas& c) const {
             const double gap=rocket_.radius-rocket_.wall-
                 rocket_.mountBoreRadius-rocket_.mountWall;
             c.text(inspectorX+16,noteY+47,formatted(gap*1000,1,"mm sleeve clearance"),muted);
+        } else if(selectedPart_==6 && rocket_.insertEnabled) {
+            const double volume=3.14159265358979323846*rocket_.insertLength*
+                (rocket_.insertOuterRadius*rocket_.insertOuterRadius-
+                 rocket_.insertBoreRadius*rocket_.insertBoreRadius);
+            c.text(inspectorX+16,noteY+47,formatted(volume*rocket_.insertDensity*1000,1,"g insert"),muted);
+        } else if(selectedPart_==7) {
+            c.text(inspectorX+16,noteY+47,"0 deg heading = east; +90 = north",muted,0,285);
+        } else if(selectedPart_==8 && !reference_.triangles.empty()) {
+            c.text(inspectorX+16,noteY+47,
+                std::to_string(reference_.triangles.size())+" visual triangles",muted);
         }
         sectionButton(c,inspectorX+16,635,288,"Reset component",focusRegion_==5,
                       hoverX_>=inspectorX+16 && hoverX_<1264 && hoverY_>=635 && hoverY_<668);
@@ -179,34 +280,63 @@ void App::drawInspector(Canvas& c) const {
         const struct {const char* name;std::string value;} values[] = {
             {"Time",formatted(state.time,2,"s")},
             {"Altitude",formatted(state.altitude,1,"m")},
-            {"Velocity",formatted(state.velocity,1,"m/s")},
+            {"3D speed",formatted(state.speed,1,"m/s")},
+            {"Mach / air",formatted(state.mach,3)},
+            {"East",formatted(state.position.x,1,"m")},
+            {"North",formatted(state.position.z,1,"m")},
+            {"Ground range",formatted(state.range,1,"m")},
+            {"Body tilt",formatted(state.tiltDeg,1,"deg")},
+            {"Heading E-N",formatted(state.headingDeg,1,"deg")},
             {"Thrust",formatted(state.thrust,1,"N")},
-            {"Proper load",formatted(state.properG,1,"g")},
-            {"Dynamic q",formatted(state.dynamicPressure,0,"Pa")},
             {"Apogee",formatted(flight_.apogee,1,"m")},
             {"Touchdown",flight_.landed?formatted(flight_.touchdownSpeed,1,"m/s"):"Not reached"}
         };
-        for(int i=0;i<8;++i)thinRow(c,inspectorX+6,fieldY+i*42,305,
-                                     values[i].name,values[i].value,focusRegion_==3 && i==0);
-        c.text(inspectorX+16,568,"1D point mass / no wind",ink);
-        c.text(inspectorX+16,591,"Ideal canopy opens at apogee.",muted,0,286);
+        for(int i=0;i<12;++i)compactRow(c,inspectorX+6,fieldY+i*31,305,
+                                        values[i].name,values[i].value,
+                                        focusRegion_==3 && i==0);
+        c.text(inspectorX+16,568,"Open-loop rigid body / not rated",ink);
+        c.text(inspectorX+16,591,
+            formatted(state.dynamicPressure,0,"Pa q")+"  /  "+
+            formatted(state.properG,1,"g proper"),muted,0,286);
         sectionButton(c,inspectorX+16,635,288,"Edit components",focusRegion_==5,
                       hoverX_>=inspectorX+16 && hoverX_<1264 && hoverY_>=635 && hoverY_<668);
     } else {
-        c.text(inspectorX+16,148,"Read-only / no telemetry decoder",muted);
+        c.text(inspectorX+16,148,"CSV file / not a USB connection",muted);
         c.rect(inspectorX+16,171,288,1,rule);
-        c.text(inspectorX+16,192,"Discovery status",muted);
-        c.text(inspectorX+16,217,usbStatus_,ink,0,284);
-        c.rect(inspectorX+16,250,288,1,rule);
-        c.text(inspectorX+16,268,"Serial transfer",muted);
-        c.text(inspectorX+16,293,"Not implemented",ink);
-        c.rect(inspectorX+16,325,288,1,rule);
-        c.text(inspectorX+16,343,"Incoming packets",muted);
-        c.text(inspectorX+16,368,"No capture available",ink);
-        c.rect(inspectorX+16,400,288,1,rule);
-        c.text(inspectorX+16,568,"No live data is displayed.",ink);
-        c.text(inspectorX+16,591,"Use Flight for calculated data.",muted);
-        sectionButton(c,inspectorX+16,635,288,"Edit components",focusRegion_==5,
+        if(recording_.samples.empty()) {
+            c.text(inspectorX+16,202,"No sensor samples loaded",ink);
+            c.text(inspectorX+16,242,"Header and units required:",muted);
+            c.text(inspectorX+16,273,"time_s,altitude_m,...",ink,0,286);
+            c.text(inspectorX+16,304,"gx_deg_s,gy_deg_s,gz_deg_s",muted,0,286);
+            c.rect(inspectorX+16,345,288,1,rule);
+            c.text(inspectorX+16,568,"Recorded CSV, not live data.",ink);
+            c.text(inspectorX+16,591,"Place file next to project.eul.",muted);
+        } else {
+            const TelemetrySample s=recording_.at(groundTime_);
+            const bool calibrated=recording_.calibrated;
+            const Quaternion q=s.attitude;
+            const double cosine=std::clamp(1-2*(q.x*q.x+q.z*q.z),-1.0,1.0);
+            const double tilt=std::acos(cosine)*180.0/3.14159265358979323846;
+            const struct {const char* name;std::string value;} values[] = {
+                {"Time",formatted(s.time,2,"s")},
+                {"Raw altitude",formatted(s.altitude,1,"m")},
+                {"Zeroed alt",calibrated?formatted(s.altitude-recording_.altitudeZero,1,"m"):"--"},
+                {"Gyro X",formatted(s.gyro.x,2,"deg/s")},
+                {"Gyro Y",formatted(s.gyro.y,2,"deg/s")},
+                {"Gyro Z",formatted(s.gyro.z,2,"deg/s")},
+                {"Bias X",calibrated?formatted(recording_.gyroBias.x,2,"deg/s"):"--"},
+                {"Bias Y",calibrated?formatted(recording_.gyroBias.y,2,"deg/s"):"--"},
+                {"Bias Z",calibrated?formatted(recording_.gyroBias.z,2,"deg/s"):"--"},
+                {"Relative tilt",calibrated?formatted(tilt,1,"deg"):"--"}
+            };
+            for(int i=0;i<10;++i)compactRow(c,inspectorX+6,fieldY+i*36,305,
+                                            values[i].name,values[i].value);
+            c.text(inspectorX+16,568,calibrated?"Bias + altitude zero set":"Calibration required",ink);
+            c.text(inspectorX+16,591,"Gyro-only attitude drifts over time.",muted,0,288);
+        }
+        const char* button=recording_.samples.empty()?"Load recorded CSV":
+            recording_.calibrated?"Recalibrate first 2 s":"Calibrate first 2 s";
+        sectionButton(c,inspectorX+16,635,288,button,focusRegion_==5,
                       hoverX_>=inspectorX+16 && hoverX_<1264 && hoverY_>=635 && hoverY_<668);
     }
 }
@@ -215,38 +345,94 @@ void App::drawAnalysis(Canvas& c) const {
     using namespace workbench;
     c.rect(viewX,analysisY,viewW,analysisH,surface);
     c.rect(viewX,analysisY,viewW,1,rule);
+    if(page_==Page::Bench) {
+        c.text(viewX+16,analysisY+7,"Bench protocol",ink);
+        c.text(viewX+16,analysisY+40,"One bounded command / matching ACK / no retries.",muted);
+        c.text(viewX+16,analysisY+75,
+               "No live sensor stream. ACK is not position feedback.",muted);
+        c.text(viewX+16,analysisY+101,"Square / N: request neutral",muted);
+        return;
+    }
     if(page_==Page::Ground) {
-        c.text(viewX+16,analysisY+8,"Data / USB receiver",ink);
-        c.text(viewX+16,analysisY+44,"No recorded telemetry is available.",muted);
-        c.text(viewX+16,analysisY+73,"This build only attempts device discovery.",muted);
+        c.text(viewX+16,analysisY+5,"Station log",ink);
+        c.text(viewX+120,analysisY+5,recording_.calibrated?
+            "/ zeroed altitude vs time":"/ raw altitude vs time",muted);
+        if(recording_.samples.empty()) {
+            c.text(viewX+16,analysisY+44,"No recorded data. File > Load recorded CSV.",muted);
+            c.text(viewX+16,analysisY+73,"Bench USB does not supply sensor samples.",muted);
+            return;
+        }
+        const int x0=314,x1=919,y0=653,y1=600;
+        const double start=recording_.samples.front().time;
+        const double duration=recording_.samples.back().time-start;
+        double lowest=recording_.samples.front().altitude;
+        double highest=lowest;
+        for(const auto& sample:recording_.samples) {
+            lowest=std::min(lowest,sample.altitude);
+            highest=std::max(highest,sample.altitude);
+        }
+        if(highest-lowest<1) {highest+=0.5;lowest-=0.5;}
+        const auto yPos=[&](double altitude) {
+            return y0-static_cast<int>((altitude-lowest)/(highest-lowest)*(y0-y1));
+        };
+        const double zero=recording_.calibrated?recording_.altitudeZero:0;
+        c.text(viewX+16,analysisY+38,formatted(highest-zero,1,"m"),accent);
+        c.text(viewX+16,analysisY+79,formatted(lowest-zero,1,"m"),muted);
+        c.line(x0,y1,x0,y0,rule);c.line(x0,y0,x1,y0,rule);
+        const int skip=std::max(1,static_cast<int>(recording_.samples.size()/550));
+        int lastX=x0,lastY=yPos(recording_.samples.front().altitude);
+        for(size_t i=static_cast<size_t>(skip);i<recording_.samples.size();
+            i+=static_cast<size_t>(skip)) {
+            const auto& s=recording_.samples[i];
+            const int x=x0+static_cast<int>((s.time-start)/duration*(x1-x0));
+            const int y=yPos(s.altitude);
+            c.line(lastX,lastY,x,y,accent,2);lastX=x;lastY=y;
+        }
+        c.line(lastX,lastY,x1,yPos(recording_.samples.back().altitude),accent,2);
+        const int cursor=x0+static_cast<int>((groundTime_-start)/duration*(x1-x0));
+        c.line(cursor,y1-2,cursor,y0+4,dark);
+        c.circle(cursor,yPos(recording_.at(groundTime_).altitude),4,dark);
+        c.text(x0,660,formatted(start,1,"s"),muted);
+        rightText(c,x1,660,formatted(recording_.samples.back().time,1,"s"),muted);
+        if(focusRegion_==4)c.border(x0-4,y1-5,x1-x0+8,y0-y1+12,accent);
         return;
     }
     c.text(viewX+16,analysisY+5,"Trajectory",ink);
-    c.text(viewX+107,analysisY+5,"/ altitude vs time",muted);
+    c.text(viewX+107,analysisY+5,"/ altitude (blue)  ground range (grey)",muted);
     if(!flight_.valid || flight_.samples.empty()) {
         c.text(viewX+16,analysisY+53,"No model run. Adjust geometry or motor clearance.",ink);
         return;
     }
     const int x0=314,x1=919,y0=653,y1=600;
     const double end=flight_.samples.back().time;
-    c.text(viewX+16,analysisY+38,formatted(flight_.apogee,0,"m"),accent);
+    const double top=std::max({0.01,flight_.apogee,flight_.maxRange});
+    c.text(viewX+16,analysisY+38,formatted(top,0,"m"),accent);
     c.text(viewX+16,analysisY+79,"0 m",muted);
     c.line(x0,y1,x0,y0,rule);c.line(x0,y0,x1,y0,rule);
     const int apx=x0+static_cast<int>(std::clamp(flight_.apogeeTime/end,0.0,1.0)*(x1-x0));
     c.line(apx,y1,apx,y0,rgb(197,211,219));
     const int skip=std::max(1,static_cast<int>(flight_.samples.size()/550));
-    int px=x0,py=y0;
+    int px=x0,py=y0,rangeY=y0;
     for(size_t i=static_cast<size_t>(skip);i<flight_.samples.size();i+=static_cast<size_t>(skip)) {
         const auto& s=flight_.samples[i];
         const int x=x0+static_cast<int>((s.time/end)*(x1-x0));
-        const int y=y0-static_cast<int>((s.altitude/std::max(0.01,flight_.apogee))*(y0-y1));
-        c.line(px,py,x,y,accent,2);px=x;py=y;
+        const int y=y0-static_cast<int>(s.altitude/top*(y0-y1));
+        const int ry=y0-static_cast<int>(s.range/top*(y0-y1));
+        c.line(px,rangeY,x,ry,rgb(112,137,148));
+        c.line(px,py,x,y,accent,2);
+        px=x;py=y;rangeY=ry;
     }
-    c.line(px,py,x1,y0,accent,2);
+    const auto& last=flight_.samples.back();
+    const int finalY=y0-static_cast<int>(last.altitude/top*(y0-y1));
+    const int finalRangeY=y0-static_cast<int>(last.range/top*(y0-y1));
+    c.line(px,rangeY,x1,finalRangeY,rgb(112,137,148));
+    c.line(px,py,x1,finalY,accent,2);
     const int cursor=x0+static_cast<int>(std::clamp(simTime_/end,0.0,1.0)*(x1-x0));
-    const double altitude=flight_.at(simTime_).altitude;
-    const int cursorY=y0-static_cast<int>((altitude/std::max(0.01,flight_.apogee))*(y0-y1));
+    const FlightSample state=flight_.at(simTime_);
+    const int cursorY=y0-static_cast<int>(state.altitude/top*(y0-y1));
+    const int cursorRangeY=y0-static_cast<int>(state.range/top*(y0-y1));
     c.line(cursor,y1-2,cursor,y0+4,dark);
+    c.circle(cursor,cursorRangeY,3,rgb(112,137,148));
     c.circle(cursor,cursorY,4,dark);
     c.text(x0,660,"0 s",muted);
     const std::string duration=formatted(end,1,"s");
@@ -262,7 +448,9 @@ void App::drawStatus(Canvas& c) const {
     c.rect(0,statusY,1280,1,rule);
     c.rect(15,statusY+13,7,7,accent);
     c.text(31,statusY+6,status_,ink,0,615);
-    c.text(697,statusY+6,"MODEL ONLY / NOT FLIGHT-RATED",muted);
+    c.text(697,statusY+6,page_==Page::Ground?"RECORDED DATA / NOT LIVE":
+           page_==Page::Bench?"USB BENCH / NOT FLIGHT":
+           "MODEL ONLY / NOT FLIGHT-RATED",muted);
     const std::string label=demoMode_?"HOST REPLAY / NOT PS4":runtimeLabel_;
     rightText(c,1262,statusY+6,label,muted);
 }
@@ -296,23 +484,23 @@ void App::drawHelp(Canvas& c) const {
     const char* controls[] = {
         "MOUSE + KEYBOARD  /  HOST PREVIEW",
         "Click a part, then a value to type. Enter applies; Esc cancels.",
-        "Use +/- to step; drag in the view to orbit, wheel to zoom.",
+        "Use +/- to step; drag to orbit, wheel to zoom; SIDE/TOP/ISO.",
         "Tab cycles focus; arrows navigate; Alt opens the menu.",
         "Ctrl+S saves; Ctrl+O opens; Ctrl+N resets; Ctrl+Z undoes.",
         "CONTROLLER  /  ORBIS BUILD",
         "L1/R1: part   |   L2/R2: focus   |   D-pad: select/step",
-        "X: confirm/step   |   O: back   |   Square: save",
-        "Options: menu   |   Triangle: USB   |   R3: fit view"
+        "X: confirm/step | O: back | Square: save or neutral",
+        "Options: menu/bench   |   Triangle: ground   |   R3: camera"
     };
     const char* limits[] = {
-        "EDUCATIONAL VERTICAL POINT-MASS MODEL",
+        "ILLUSTRATIVE 3D / OPEN-LOOP RIGID BODY",
         "Published Klima C6/D9 curves are read-only motor data.",
-        "Shell, fins and recovery use illustrative material values.",
-        "Constant Cd values are assumptions, not wind-tunnel data.",
-        "No wind, pitch, 6-DoF stability or structural analysis.",
-        "Canopy deploys ideally at apogee without delay or failure.",
-        "USB is discovery only; telemetry is not captured or decoded.",
-        "Do not use results to certify a rocket or plan a flight."
+        "Wind, rail tilt and gimbal are scenario assumptions.",
+        "Fin slope, CP and damping are not measured coefficients.",
+        "Flight model cannot control the USB actuator bench.",
+        "Canopy drag starts ideally at descent without delay.",
+        "Bench USB sends manual pulses only; no live sensor data.",
+        "Do not use this model to certify or plan a real flight."
     };
     const int count=helpMode_==1?9:8;
     for(int i=0;i<count;++i) {
@@ -346,33 +534,90 @@ void App::drawDiscardConfirmation(Canvas& c) const {
     }
 }
 
+void App::drawBenchConfirmation(Canvas& c) const {
+    if(!benchConfirm_)return;
+    c.rect(0,0,1280,720,rgb(226,232,232));
+    c.rect(338,221,620,266,rgb(195,207,211));
+    c.rect(330,214,620,266,surface);
+    c.border(330,214,620,266,rule,2);
+    c.rect(330,214,620,5,accent);
+    c.text(355,240,"Confirm one physical pulse",ink,1);
+    constexpr const char* names[]={"TVC pitch","TVC yaw","Fin A","Fin B"};
+    const std::string command=std::string(names[benchAxis_])+": "+
+        (benchAngleCdeg_>0?"+2":"-2")+" deg for 150 ms";
+    c.text(355,303,command,ink);
+    c.text(355,337,"No motor or propellant. Restrain the rig; use a power cut-off.",muted,0,565);
+    c.text(355,369,"The board must return to neutral on timeout or gate loss.",muted,0,565);
+    c.rect(355,402,565,1,rule);
+    sectionButton(c,354,420,148,"Cancel",benchConfirmFocus_==0);
+    sectionButton(c,512,420,180,"Neutral now",benchConfirmFocus_==1);
+    sectionButton(c,702,420,222,"Send one pulse",benchConfirmFocus_==2);
+}
+
 void App::draw(Canvas& c,double /*now*/) const {
     using namespace workbench;
     c.clear(chrome);
-    if(page_==Page::Ground) {
+    if(page_==Page::Bench) {
         c.rect(viewX,viewY,viewW,viewH,rgb(235,240,241));
         c.rect(viewX,viewY,viewW,39,surface);
         c.rect(viewX,viewY+38,viewW,1,rule);
-        c.text(viewX+17,viewY+9,"USB / DISCOVERY ONLY",ink);
-        c.text(viewX+72,viewY+133,"No live telemetry",ink,1);
-        c.rect(viewX+73,viewY+200,548,1,rule);
-        c.text(viewX+73,viewY+225,"No serial bytes are read by this build.",ink);
-        c.text(viewX+73,viewY+259,"A discovered device is not a data connection.",muted);
-        c.text(viewX+73,viewY+319,"See the inspector for discovery status.",muted);
+        c.text(viewX+17,viewY+8,"SERVO BENCH  /  MANUAL USB ONLY",ink);
+        c.text(viewX+17,viewY+57,bench_ && bench_->connected()?
+            bench_->physicalGate()?"Board identified. Gate reported enabled at handshake.":
+                                    "Board identified. Physical enable gate open.":
+            "Disconnected. No actuator commands are sent.",ink,0,670);
+        c.text(viewX+17,viewY+89,"COMMAND CHANNEL / NOT MEASURED SERVO POSITION",muted);
+        constexpr const char* labels[]={"TVC pitch","TVC yaw","Fin A","Fin B"};
+        for(int i=0;i<4;++i) {
+            const int y=viewY+132+i*63;
+            if(i==benchAxis_) {
+                c.rect(viewX+14,y-6,viewW-28,52,accentPale);
+                c.rect(viewX+14,y-6,4,52,accent);
+            } else c.rect(viewX+14,y-6,viewW-28,52,surface);
+            c.text(viewX+36,y+4,labels[i],i==benchAxis_?ink:muted);
+            c.line(viewX+280,y+17,viewX+626,y+17,rule,2);
+            c.line(viewX+453,y+7,viewX+453,y+26,i==benchAxis_?accent:muted,2);
+            c.text(viewX+275,y+24,"-2 deg",muted);
+            c.text(viewX+599,y+24,"+2 deg",muted);
+        }
+        c.text(viewX+17,viewY+403,"ACK confirms receipt, not measured travel. No flight link.",muted,0,676);
         c.border(viewX,viewY,viewW,viewH,rule);
+    } else if(page_==Page::Ground) {
+        if(recording_.samples.empty()) {
+            c.rect(viewX,viewY,viewW,viewH,rgb(235,240,241));
+            c.rect(viewX,viewY,viewW,39,surface);
+            c.rect(viewX,viewY+38,viewW,1,rule);
+            c.text(viewX+17,viewY+9,"GROUND / NO RECORDED DATA",ink);
+            c.text(viewX+72,viewY+133,"Open a recorded sensor file",ink,1);
+            c.rect(viewX+73,viewY+200,548,1,rule);
+            c.text(viewX+73,viewY+225,"Place recording.csv beside project.eul.",ink);
+            c.text(viewX+73,viewY+259,"File > Load recorded CSV, then Calibrate.",muted);
+            c.text(viewX+73,viewY+319,"Servo bench is separate; no live sensor feed.",muted);
+            c.border(viewX,viewY,viewW,viewH,rule);
+        } else {
+            const MassProperties mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
+            RocketView view;
+            view.x=viewX;view.y=viewY;view.w=viewW;view.h=viewH;
+            view.yaw+=yawOffset_;view.pitch+=pitchOffset_;view.zoom=zoom_;
+            view.cameraPreset=cameraPreset_;
+            drawRecordedView(c,rocket_,mass,view,recording_.at(groundTime_),
+                             recording_.calibrated,recording_.altitudeZero);
+        }
     } else {
         const MassProperties mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
         RocketView view;
         view.x=viewX;view.y=viewY;view.w=viewW;view.h=viewH;
         view.yaw+=yawOffset_;view.pitch+=pitchOffset_;view.zoom=zoom_;
+        view.cameraPreset=cameraPreset_;
+        view.reference=reference_.triangles.empty()?nullptr:&reference_;
         view.flight=page_==Page::Flight;
         view.selected=page_==Page::Garage?selectedPart_:-1;
         if(view.flight) {
-            const FlightSample s=flight_.at(simTime_);
-            view.altitude=s.altitude;
-            view.thrust=s.thrust;
-            view.canopyOpen=rocket_.parachuteDiameter>0 &&
-                s.time>flight_.apogeeTime && s.altitude>0;
+            view.sample=flight_.at(simTime_);
+            view.trajectory=&flight_;
+            view.altitude=view.sample.altitude;
+            view.thrust=view.sample.thrust;
+            view.canopyOpen=view.sample.canopyOpen;
         }
         drawRocketView(c,rocket_,mass,view);
     }
@@ -384,5 +629,6 @@ void App::draw(Canvas& c,double /*now*/) const {
     drawMenu(c);
     drawHelp(c);
     drawDiscardConfirmation(c);
+    drawBenchConfirmation(c);
 }
 } // namespace eulo

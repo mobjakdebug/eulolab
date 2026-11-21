@@ -29,6 +29,21 @@ jobs:
           path: out/*.ppm
           retention-days: 7
 
+  bench-firmware-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      # Deliberately reserved, non-enumerable USB IDs and compile-only GPIOs.
+      # Never publish these binaries or claim board PWM/console compatibility.
+      - name: Compile ESP32-S3 bench reference without flashing hardware
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v5.3.4
+          target: esp32s3
+          path: firmware/esp32s3
+          command: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci" build
+
   ps4-pkg:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

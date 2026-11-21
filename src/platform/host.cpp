@@ -9,12 +9,22 @@
 #include <vector>
 
 int main(int argc, char** argv) {
+    if(argc==3 && std::strcmp(argv[1],"--check-mesh")==0) {
+        eulo::ReferenceMesh mesh;
+        std::string error;
+        return mesh.load(argv[2],error)?0:4;
+    }
+    if(argc==3 && std::strcmp(argv[1],"--check-recording")==0) {
+        eulo::TelemetryRecording recording;
+        std::string error;
+        return recording.load(argv[2],error)?0:4;
+    }
     eulo::App app;
-    if(!app.init("assets/font-atlas.bin","assets/motors","out/project.ini")) {
+    if(!app.init("assets/font-atlas.bin","assets/motors","out/project.eul")) {
         std::fprintf(stderr,"Cannot load font atlas or commercial .eng curves\n");return 1;
     }
     app.setRuntimeLabel("HOST PREVIEW / NOT PS4");
-    app.setUsbStatus("USB unavailable in host preview");
+    app.setUsbStatus("No host USB bridge");
     constexpr int width=1280,height=720;
     std::vector<uint32_t> pixels(static_cast<size_t>(width)*height);
     eulo::Canvas canvas(pixels.data(),width,height,app.font());
@@ -30,6 +40,9 @@ int main(int argc, char** argv) {
                 app.draw(canvas,0);
                 if(std::fwrite(pixels.data(),sizeof(uint32_t),pixels.size(),stdout)!=pixels.size() ||
                    std::fflush(stdout)!=0)return 3;
+            } else if(std::strcmp(line,"PAGE\n")==0) {
+                const char page=static_cast<char>('0'+static_cast<int>(app.page()));
+                if(std::fwrite(&page,1,1,stdout)!=1 || std::fflush(stdout)!=0)return 3;
             } else if(std::sscanf(line,"CLICK %d %d",&x,&y)==2)app.click(x,y);
             else if(std::sscanf(line,"HOVER %d %d",&x,&y)==2)app.hover(x,y);
             else if(std::sscanf(line,"DRAG %d %d",&x,&y)==2)

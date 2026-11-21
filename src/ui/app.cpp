@@ -4,11 +4,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <utility>
 
 namespace eulo {
 namespace {
 constexpr double pi = 3.14159265358979323846;
-constexpr int counts[] = {6,5,9,2,6,4};
+constexpr int counts[] = {6,5,9,2,6,4,7,8,5};
 std::string number(double value,int decimals) {
     char text[64];
     std::snprintf(text,sizeof(text),"%.*f",decimals,value);
@@ -16,9 +17,21 @@ std::string number(double value,int decimals) {
 }
 }
 
+void App::setBenchControl(BenchControl* control) {
+    if(bench_ && bench_!=control)bench_->close();
+    bench_=control;
+    benchConfirm_=false;
+}
+void App::leaveBench() {
+    benchConfirm_=false;
+    if(page_==Page::Bench && bench_)bench_->close();
+}
 bool App::init(const char* fontPath,const char* motorDirectory,const char* projectPath) {
     if (!font_.load(fontPath) || !motorDirectory) return false;
-    projectPath_ = projectPath ? projectPath : "project.ini";
+    projectPath_ = projectPath ? projectPath : "project.eul";
+    const size_t slash=projectPath_.find_last_of('/');
+    recordingPath_=(slash==std::string::npos?std::string():
+                    projectPath_.substr(0,slash+1))+"recording.csv";
     std::string error;
     const std::string directory(motorDirectory);
     if (!motors_[0].load((directory+"/Klima_C6.eng").c_str(),error) ||
@@ -30,7 +43,44 @@ bool App::init(const char* fontPath,const char* motorDirectory,const char* proje
     return true;
 }
 void App::rebuild() { flight_=simulate(rocket_,motor()); }
-int App::fieldCount(int part) const { return part>=0 && part<6 ? counts[part] : 0; }
+std::string App::projectDirectory() const {
+    const size_t slash=projectPath_.find_last_of('/');
+    return slash==std::string::npos?std::string():projectPath_.substr(0,slash+1);
+}
+bool App::loadReference(int format,ReferenceMesh& mesh,std::string& error) const {
+    if(format!=1 && format!=2) {error="Select OBJ or STL.";return false;}
+    const std::string path=projectDirectory()+(format==1?"reference.obj":"reference.stl");
+    return mesh.load(path.c_str(),error);
+}
+bool App::importReference(int format) {
+    leaveBench();
+    ReferenceMesh candidate;
+    std::string error;
+    if(!loadReference(format,candidate,error)) {status_=error;return false;}
+    const Rocket before=rocket_;
+    rocket_.referenceFormat=format;
+    reference_=std::move(candidate);
+    if(before.referenceFormat!=format) {
+        previousRocket_=before;hasUndo_=true;dirty_=true;
+    }
+    page_=Page::Garage;selectedPart_=8;selectedField_=0;focusRegion_=3;playing_=false;
+    status_="Reference mesh loaded for visual comparison; no mass or solver coupling.";
+    return true;
+}
+bool App::importTelemetry(const char* path) {
+    leaveBench();
+    const std::string source=path?path:"";
+    TelemetryRecording next;
+    std::string error;
+    if(!next.load(source.c_str(),error)) {status_=error;return false;}
+    recording_=std::move(next);
+    recordingPath_=source;
+    groundTime_=recording_.samples.front().time;
+    page_=Page::Ground;playing_=false;focusRegion_=4;
+    status_="Recorded CSV loaded. Calibrate with stationary first 2 s.";
+    return true;
+}
+int App::fieldCount(int part) const { return part>=0 && part<9 ? counts[part] : 0; }
 
 App::Field App::field(int part,int index) const {
     const Rocket& r=rocket_;
@@ -87,6 +137,39 @@ App::Field App::field(int part,int index) const {
                 case 2:return {"Fabric density","g/m2",r.canopyArealDensity*1000,10,1000,5,0,false};
                 case 3:return {"CG from tail","mm",r.recoveryFromTail*1000,0,3000,5,0,false};
             } break;
+        case 6:
+            switch(index) {
+                case 0:return {"Build insert","",r.insertEnabled?1.0:0.0,0,1,1,0,true};
+                case 1:return {"Length","mm",r.insertLength*1000,2,500,1,1,false};
+                case 2:return {"Outer diameter","mm",r.insertOuterRadius*2000,2,80,0.1,1,false};
+                case 3:return {"Bore diameter","mm",r.insertBoreRadius*2000,0,78,0.1,1,false};
+                case 4:return {"Center / tail","mm",r.insertFromTail*1000,0,
+                    r.bodyLength*1000,1,1,false};
+                case 5:return {"Material","",static_cast<double>(static_cast<int>(r.insertMaterial)),
+                    0,2,1,0,true};
+                case 6:return {"Density","kg/m3",r.insertDensity,80,8000,50,0,false};
+            } break;
+        case 7:
+            switch(index) {
+                case 0:return {"Rail tilt","deg",r.launchTiltDeg,0,20,0.5,1,false};
+                case 1:return {"Rail heading","deg",r.launchHeadingDeg,-180,180,5,0,false};
+                case 2:return {"Wind east","m/s",r.windEast,-30,30,0.5,1,false};
+                case 3:return {"Wind north","m/s",r.windNorth,-30,30,0.5,1,false};
+                case 4:return {"Gimbal pitch","deg",r.gimbalPitchDeg,-5,5,0.1,1,false};
+                case 5:return {"Gimbal yaw","deg",r.gimbalYawDeg,-5,5,0.1,1,false};
+                case 6:return {"CP from tail","mm",r.cpFromTail*1000,0,
+                    r.bodyLength*1000,5,0,false};
+                case 7:return {"Angular damping","Nms",r.angularDamping,0,0.1,0.0005,4,false};
+            } break;
+        case 8:
+            switch(index) {
+                case 0:return {"Reference file","",static_cast<double>(r.referenceFormat),
+                    0,2,1,0,true};
+                case 1:return {"Scale / vertex","mm",r.referenceUnitMm,0.01,1000,.1,2,false};
+                case 2:return {"Offset east","mm",r.referenceEastMm,-3000,3000,5,1,false};
+                case 3:return {"Offset / tail","mm",r.referenceTailMm,-3000,3000,5,1,false};
+                case 4:return {"Offset north","mm",r.referenceNorthMm,-3000,3000,5,1,false};
+            } break;
     }
     return {"Unknown","",0,0,0,0,0,false};
 }
@@ -98,13 +181,17 @@ std::string App::valueText(int part,int index) const {
         if(part==1)return materialName(rocket_.noseMaterial);
         if(part==2)return finMaterialName(rocket_.finMaterial);
         if(part==4)return motor().name;
+        if(part==6 && index==0)return rocket_.insertEnabled?"BUILT":"NOT BUILT";
+        if(part==6)return materialName(rocket_.insertMaterial);
+        if(part==8)return rocket_.referenceFormat==0?"NONE":
+            rocket_.referenceFormat==1?"OBJ":"STL";
     }
     if(part==5 && index==0 && rocket_.parachuteDiameter==0)return "OFF";
     return number(f.value,f.decimals);
 }
 
 bool App::applyField(int part,int index,double value) {
-    if(part<0 || part>=6 || index<0 || index>=fieldCount(part) || !std::isfinite(value))return false;
+    if(part<0 || part>=9 || index<0 || index>=fieldCount(part) || !std::isfinite(value))return false;
     const Field f=field(part,index);
     if(value<f.min-1e-7 || value>f.max+1e-7) {
         status_=std::string(f.name)+": enter "+number(f.min,1)+" to "+number(f.max,1)+
@@ -121,6 +208,8 @@ bool App::applyField(int part,int index,double value) {
         status_="Value unchanged.";
         return true;
     }
+    if(part==8 && index==0 && value!=0)
+        return importReference(static_cast<int>(value));
     const Rocket before=rocket_;
     switch(part) {
         case 0:
@@ -175,6 +264,36 @@ bool App::applyField(int part,int index,double value) {
                 case 2:rocket_.canopyArealDensity=value/1000;break;
                 case 3:rocket_.recoveryFromTail=value/1000;break;
             } break;
+        case 6:
+            switch(index) {
+                case 0:rocket_.insertEnabled=value!=0;break;
+                case 1:rocket_.insertLength=value/1000;break;
+                case 2:rocket_.insertOuterRadius=value/2000;break;
+                case 3:rocket_.insertBoreRadius=value/2000;break;
+                case 4:rocket_.insertFromTail=value/1000;break;
+                case 5:rocket_.insertMaterial=static_cast<Material>(static_cast<int>(value));
+                       rocket_.insertDensity=illustrativeDensity(rocket_.insertMaterial);break;
+                case 6:rocket_.insertDensity=value;break;
+            } break;
+        case 7:
+            switch(index) {
+                case 0:rocket_.launchTiltDeg=value;break;
+                case 1:rocket_.launchHeadingDeg=value;break;
+                case 2:rocket_.windEast=value;break;
+                case 3:rocket_.windNorth=value;break;
+                case 4:rocket_.gimbalPitchDeg=value;break;
+                case 5:rocket_.gimbalYawDeg=value;break;
+                case 6:rocket_.cpFromTail=value/1000;break;
+                case 7:rocket_.angularDamping=value;break;
+            } break;
+        case 8:
+            switch(index) {
+                case 0:rocket_.referenceFormat=0;reference_=ReferenceMesh{};break;
+                case 1:rocket_.referenceUnitMm=value;break;
+                case 2:rocket_.referenceEastMm=value;break;
+                case 3:rocket_.referenceTailMm=value;break;
+                case 4:rocket_.referenceNorthMm=value;break;
+            } break;
     }
     const bool geometryValid=rocket_.valid();
     const bool motorFit=geometryValid && motorFits(rocket_,motor());
@@ -182,6 +301,7 @@ bool App::applyField(int part,int index,double value) {
         rocket_=before;
         status_=geometryValid?
             "Rejected: motor casing must fit fully inside the mount.":
+            part==6?"Rejected: insert must clear the sleeve and fit inside the body.":
             "Rejected: dependent geometry must fit inside the body.";
         return false;
     }
@@ -189,7 +309,8 @@ bool App::applyField(int part,int index,double value) {
     hasUndo_=true;
     dirty_=true;
     rebuild();
-    status_=std::string(f.name)+" changed; mass and flight model recalculated.";
+    status_=flight_.valid?std::string(f.name)+" changed; model recalculated.":
+        std::string(f.name)+" changed; virtual run exceeded solver limits.";
     return true;
 }
 bool App::setSelectedValue(double value) {return applyField(selectedPart_,selectedField_,value);}
@@ -233,12 +354,36 @@ void App::resetSelectedPart() {
             rocket_.canopyCd=defaults.canopyCd;
             rocket_.canopyArealDensity=defaults.canopyArealDensity;
             rocket_.recoveryFromTail=defaults.recoveryFromTail;break;
+        case 6:
+            rocket_.insertEnabled=defaults.insertEnabled;
+            rocket_.insertLength=defaults.insertLength;
+            rocket_.insertOuterRadius=defaults.insertOuterRadius;
+            rocket_.insertBoreRadius=defaults.insertBoreRadius;
+            rocket_.insertFromTail=defaults.insertFromTail;
+            rocket_.insertMaterial=defaults.insertMaterial;
+            rocket_.insertDensity=defaults.insertDensity;break;
+        case 7:
+            rocket_.launchTiltDeg=defaults.launchTiltDeg;
+            rocket_.launchHeadingDeg=defaults.launchHeadingDeg;
+            rocket_.windEast=defaults.windEast;
+            rocket_.windNorth=defaults.windNorth;
+            rocket_.gimbalPitchDeg=defaults.gimbalPitchDeg;
+            rocket_.gimbalYawDeg=defaults.gimbalYawDeg;
+            rocket_.cpFromTail=defaults.cpFromTail;
+            rocket_.angularDamping=defaults.angularDamping;break;
+        case 8:
+            rocket_.referenceFormat=defaults.referenceFormat;
+            rocket_.referenceUnitMm=defaults.referenceUnitMm;
+            rocket_.referenceEastMm=defaults.referenceEastMm;
+            rocket_.referenceTailMm=defaults.referenceTailMm;
+            rocket_.referenceNorthMm=defaults.referenceNorthMm;break;
     }
     if(!rocket_.valid() || !motorFits(rocket_,motor())) {
         rocket_=before;
         status_="Reset rejected: another component depends on this geometry.";
         return;
     }
+    if(selectedPart_==8)reference_=ReferenceMesh{};
     previousRocket_=before;hasUndo_=true;dirty_=true;rebuild();
     status_=std::string(workbench::partNames[selectedPart_])+" restored to defaults.";
 }
@@ -286,6 +431,46 @@ void App::runMenuItem() {
 
 void App::action(Action a) {
     demoMode_=false;
+    // An emergency neutral/close must work even over a confirmation overlay.
+    if(a==Action::BenchDisconnect || a==Action::BenchNeutral) {
+        benchConfirm_=false;
+        if(a==Action::BenchDisconnect) {
+            if(bench_)bench_->close();
+            status_="Bench link closed. Check board neutral before touching hardware.";
+        } else if(!bench_ || !bench_->connected())status_="No identified bench board.";
+        else {
+            std::string error;
+            status_=bench_->neutral(error)?
+                "Neutral ACK received; verify the rig is stationary.":error;
+        }
+        return;
+    }
+    if(benchConfirm_) {
+        switch(a) {
+            case Action::Back:benchConfirm_=false;status_="Bench pulse cancelled.";return;
+            case Action::FocusNext:case Action::NextPart:case Action::Increase:
+                benchConfirmFocus_=(benchConfirmFocus_+1)%3;return;
+            case Action::FocusPrevious:case Action::PrevPart:case Action::Decrease:
+                benchConfirmFocus_=(benchConfirmFocus_+2)%3;return;
+            case Action::Confirm:
+                if(benchConfirmFocus_==0) {
+                    benchConfirm_=false;status_="Bench pulse cancelled.";return;
+                }
+                if(benchConfirmFocus_==1) {action(Action::BenchNeutral);return;}
+                benchConfirm_=false;
+                if(page_!=Page::Bench || !bench_ || !bench_->connected()) {
+                    status_="Bench disconnected; no pulse sent.";return;
+                }
+                {
+                    std::string error;
+                    status_=bench_->pulse(static_cast<uint8_t>(benchAxis_),
+                        benchAngleCdeg_,150,error)?
+                        "Timed bench pulse ACK; board must return to neutral.":error;
+                }
+                return;
+            default:return;
+        }
+    }
     if(confirmDiscard_) {
         switch(a) {
             case Action::Back:confirmDiscard_=false;status_="Kept the current project.";return;
@@ -344,9 +529,15 @@ void App::action(Action a) {
             default:break;
         }
     }
+    if(page_==Page::Bench && (a==Action::NewProject || a==Action::Garage ||
+       a==Action::Flight || a==Action::Ground || a==Action::LoadRecording ||
+       a==Action::ImportObj || a==Action::ImportStl || a==Action::Load ||
+       a==Action::JumpApogee || a==Action::NextPart || a==Action::PrevPart ||
+       a==Action::Back))leaveBench();
     switch(a) {
         case Action::NewProject:
-            rocket_=Rocket{};rebuild();page_=Page::Garage;selectedPart_=0;
+            rocket_=Rocket{};reference_=ReferenceMesh{};rebuild();
+            page_=Page::Garage;selectedPart_=0;
             selectedField_=0;focusRegion_=3;simTime_=0;playing_=false;
             dirty_=false;saved_=false;hasUndo_=false;
             status_="New project. Select any component to edit.";break;
@@ -355,28 +546,80 @@ void App::action(Action a) {
         case Action::Flight:
             if(flight_.valid && !flight_.samples.empty()) {
                 page_=Page::Flight;focusRegion_=4;simTime_=0;playing_=true;
-                status_="Playing the educational 1D flight model.";
+                status_="Playing the virtual 3D open-loop run (not flight-rated).";
             } else status_="Simulation unavailable: inspect geometry and motor fit.";
             break;
         case Action::Ground:
             page_=Page::Ground;focusRegion_=5;playing_=false;
-            status_="USB discovery only; no telemetry is being read.";break;
+            status_=recording_.samples.empty()?
+                "Ground: load recorded CSV. Bench USB does not stream sensors.":
+                "Ground: recorded CSV, not a live sensor connection.";
+            break;
+        case Action::Bench:
+            page_=Page::Bench;focusRegion_=5;benchFocus_=0;playing_=false;
+            status_="USB bench: identify a board before testing.";
+            break;
+        case Action::BenchConnect: {
+            if(page_!=Page::Bench)break;
+            if(!bench_) {status_="No Orbis bench transport in this host preview.";break;}
+            std::string error;
+            status_=bench_->connect(error)?
+                bench_->physicalGate()?"Bench USB identified; physical gate reported enabled.":
+                    "Bench USB identified; physical enable jumper is open.":error;
+            break;
+        }
+        case Action::BenchAxisPrev:case Action::BenchAxisNext:
+            if(page_!=Page::Bench)break;
+            benchAxis_=(benchAxis_+(a==Action::BenchAxisNext?1:3))%4;
+            status_="Selected bench channel; this does not move a servo.";
+            break;
+        case Action::BenchPulseMinus:case Action::BenchPulsePlus:
+            if(page_!=Page::Bench)break;
+            if(!bench_ || !bench_->connected() || !bench_->physicalGate()) {
+                status_="No pulse: identify a board and close its physical enable gate.";
+                break;
+            }
+            benchAngleCdeg_=a==Action::BenchPulsePlus?200:-200;
+            benchConfirmFocus_=0;benchConfirm_=true;
+            status_="Confirm a single 150 ms bench pulse, or cancel.";
+            break;
+        case Action::LoadRecording:
+            importTelemetry(recordingPath_.c_str());break;
+        case Action::CalibrateRecording: {
+            std::string error;
+            if(recording_.calibrate(error)) {
+                status_="Stationary-window gyro bias and altitude zero set (relative pose).";
+            } else status_=error;
+            break;
+        }
+        case Action::ImportObj:importReference(1);break;
+        case Action::ImportStl:importReference(2);break;
+        case Action::ExportObj:
+            status_=exportVisualObj(rocket_,(projectDirectory()+"assembly.obj").c_str())?
+                "Visual OBJ exported beside project.eul (not watertight).":
+                "OBJ export failed: check project storage.";
+            break;
         case Action::Back:
             if(menuOpen_)menuOpen_=false;
             else if(helpMode_)helpMode_=0;
             else if(page_!=Page::Garage) {page_=Page::Garage;focusRegion_=3;playing_=false;}
             break;
-        case Action::NextPart:selectedPart_=(selectedPart_+1)%6;selectedField_=0;
+        case Action::NextPart:selectedPart_=(selectedPart_+1)%9;selectedField_=0;
             focusRegion_=2;page_=Page::Garage;break;
-        case Action::PrevPart:selectedPart_=(selectedPart_+5)%6;selectedField_=0;
+        case Action::PrevPart:selectedPart_=(selectedPart_+8)%9;selectedField_=0;
             focusRegion_=2;page_=Page::Garage;break;
         case Action::NextField:selectedField_=(selectedField_+1)%fieldCount(selectedPart_);
             focusRegion_=3;break;
         case Action::PrevField:selectedField_=(selectedField_+fieldCount(selectedPart_)-1)%fieldCount(selectedPart_);
             focusRegion_=3;break;
         case Action::Increase:case Action::Decrease:
-            if(focusRegion_==4 && page_!=Page::Ground && flight_.valid &&
-               !flight_.samples.empty()) {
+            if(focusRegion_==4 && page_==Page::Ground && !recording_.samples.empty()) {
+                groundTime_=std::clamp(groundTime_+(a==Action::Increase?.5:-.5),
+                    recording_.samples.front().time,recording_.samples.back().time);
+                playing_=false;status_="Recorded-data cursor set from timeline.";
+            } else if(focusRegion_==4 && page_!=Page::Ground &&
+                      page_!=Page::Bench && flight_.valid &&
+                      !flight_.samples.empty()) {
                 page_=Page::Flight;playing_=false;
                 const double step=a==Action::Increase?.5:-.5;
                 simTime_=std::clamp(simTime_+step,0.0,flight_.samples.back().time);
@@ -385,6 +628,16 @@ void App::action(Action a) {
                 editField(a==Action::Increase?1:-1);
             break;
         case Action::TogglePlay:
+            if(page_==Page::Ground) {
+                if(recording_.samples.empty()) {
+                    status_="Load a recorded CSV before playback.";break;
+                }
+                if(!playing_ && groundTime_>=recording_.samples.back().time-1e-6)
+                    groundTime_=recording_.samples.front().time;
+                playing_=!playing_;
+                status_=playing_?"Playing recorded data (not live).":"Recorded playback paused.";
+                break;
+            }
             if(page_!=Page::Flight) {action(Action::Flight);break;}
             if(!playing_ && flight_.valid && !flight_.samples.empty() &&
                simTime_>=flight_.samples.back().time-1e-6)simTime_=0;
@@ -394,13 +647,23 @@ void App::action(Action a) {
                 dirty_=false;saved_=true;status_="Project saved.";
             } else status_="Save failed: verify the project storage directory.";
             break;
-        case Action::Load:
-            if(loadProject(rocket_,projectPath_.c_str())) {
-                rebuild();dirty_=false;saved_=true;page_=Page::Garage;
-                focusRegion_=3;playing_=false;
-                status_=flight_.valid?"Project loaded.":"Project loaded; motor clearance invalid.";
-            } else status_="Open failed: no valid saved project at this location.";
+        case Action::Load: {
+            Rocket candidate;
+            if(!loadProject(candidate,projectPath_.c_str())) {
+                status_="Open failed: no valid saved project at this location.";
+                break;
+            }
+            ReferenceMesh mesh;
+            std::string error;
+            const bool linked=candidate.referenceFormat==0 ||
+                loadReference(candidate.referenceFormat,mesh,error);
+            rocket_=candidate;reference_=std::move(mesh);
+            rebuild();dirty_=false;saved_=true;page_=Page::Garage;
+            focusRegion_=3;playing_=false;hasUndo_=false;
+            status_=!linked?"Project loaded; linked reference mesh is missing or invalid.":
+                flight_.valid?"Project loaded.":"Project loaded; motor clearance invalid.";
             break;
+        }
         case Action::Menu:menuOpen_=true;menuItem_=0;focusRegion_=0;break;
         case Action::Confirm:
             if(focusRegion_==3) {
@@ -414,32 +677,96 @@ void App::action(Action a) {
             else if(focusRegion_==1)action(workbench::tools[toolbarFocus_].action);
             else if(focusRegion_==0)action(Action::Menu);
             else if(focusRegion_==4)action(Action::TogglePlay);
-            else if(focusRegion_==5)action(page_==Page::Garage?
-                Action::ResetPart:Action::Garage);
+            else if(focusRegion_==5) {
+                if(page_==Page::Bench) {
+                    constexpr Action buttons[]={Action::BenchConnect,Action::BenchDisconnect,
+                        Action::BenchAxisPrev,Action::BenchAxisNext,
+                        Action::BenchPulseMinus,Action::BenchPulsePlus,Action::BenchNeutral};
+                    action(buttons[benchFocus_]);
+                } else action(page_==Page::Garage?Action::ResetPart:
+                    page_==Page::Ground?(recording_.samples.empty()?Action::LoadRecording:
+                                         Action::CalibrateRecording):Action::Garage);
+            }
             break;
         case Action::Undo:
+            if(page_==Page::Bench) {
+                status_="Leave the isolated bench to edit the flight model.";break;
+            }
             if(hasUndo_) {
+                if(rocket_.referenceFormat!=previousRocket_.referenceFormat) {
+                    ReferenceMesh mesh;
+                    std::string error;
+                    if(previousRocket_.referenceFormat!=0)
+                        loadReference(previousRocket_.referenceFormat,mesh,error);
+                    reference_=std::move(mesh);
+                }
                 rocket_=previousRocket_;hasUndo_=false;dirty_=true;rebuild();
-                status_="Last model change undone.";
+                status_=rocket_.referenceFormat && reference_.triangles.empty()?
+                    "Change undone; linked reference mesh cannot be opened.":
+                    "Last model change undone.";
             } else status_="Nothing to undo.";
             break;
-        case Action::ResetPart:resetSelectedPart();break;
+        case Action::ResetPart:
+            if(page_==Page::Bench)status_="Leave the bench to reset a model component.";
+            else resetSelectedPart();
+            break;
         case Action::JumpApogee:
             if(flight_.valid && !flight_.samples.empty()) {
                 page_=Page::Flight;focusRegion_=4;playing_=false;simTime_=flight_.apogeeTime;
                 status_="At model apogee. Drag the time cursor to inspect the run.";
             } else status_="No valid flight to inspect.";
             break;
-        case Action::FitView:zoom_=1;yawOffset_=0;pitchOffset_=0;
+        case Action::FitView:
+            if(page_==Page::Bench) {
+                status_="The bench has no camera; switch to Design or Flight.";break;
+            }
+            zoom_=1;yawOffset_=0;pitchOffset_=0;cameraPreset_=0;
             status_="Viewport fitted to the model.";break;
+        case Action::SideView:
+            if(page_==Page::Bench) {
+                status_="The bench has no camera; switch to Design or Flight.";break;
+            }
+            yawOffset_=-0.65;pitchOffset_=-0.12;cameraPreset_=1;
+            status_="Side camera: drag to orbit.";break;
+        case Action::TopView:
+            if(page_==Page::Bench) {
+                status_="The bench has no camera; switch to Design or Flight.";break;
+            }
+            yawOffset_=-0.65;pitchOffset_=1.28;cameraPreset_=2;
+            status_="Top camera: drag to orbit.";break;
+        case Action::IsoView:
+            if(page_==Page::Bench) {
+                status_="The bench has no camera; switch to Design or Flight.";break;
+            }
+            yawOffset_=0;pitchOffset_=0;cameraPreset_=0;
+            status_="Isometric camera: drag to orbit.";break;
+        case Action::CycleView:
+            action(cameraPreset_==0?Action::SideView:
+                   cameraPreset_==1?Action::TopView:Action::IsoView);break;
         case Action::HelpControls:helpMode_=1;status_="Controls reference.";break;
         case Action::HelpModel:helpMode_=2;status_="Model assumptions and limitations.";break;
-        case Action::FocusNext:focusRegion_=(focusRegion_+1)%6;break;
-        case Action::FocusPrevious:focusRegion_=(focusRegion_+5)%6;break;
+        case Action::BenchDisconnect:case Action::BenchNeutral:break; // handled before overlays
+        case Action::FocusNext:
+            focusRegion_=page_==Page::Bench?
+                focusRegion_==5?0:focusRegion_==0?1:5:(focusRegion_+1)%6;
+            break;
+        case Action::FocusPrevious:
+            focusRegion_=page_==Page::Bench?
+                focusRegion_==5?1:focusRegion_==1?0:5:(focusRegion_+5)%6;
+            break;
     }
 }
 void App::tick(double seconds) {
-    if(!playing_ || page_!=Page::Flight || !flight_.valid || flight_.samples.empty())return;
+    if(!playing_)return;
+    if(page_==Page::Ground && !recording_.samples.empty()) {
+        groundTime_+=std::clamp(seconds,0.0,0.25);
+        if(groundTime_>=recording_.samples.back().time) {
+            groundTime_=recording_.samples.back().time;playing_=false;
+            status_="Recorded playback complete.";
+        }
+        return;
+    }
+    if(page_!=Page::Flight || !flight_.valid || flight_.samples.empty())return;
     simTime_+=std::clamp(seconds,0.0,0.25);
     if(simTime_>=flight_.samples.back().time) {
         simTime_=flight_.samples.back().time;playing_=false;
@@ -447,12 +774,26 @@ void App::tick(double seconds) {
     }
 }
 void App::orbit(double yawRadians,double pitchRadians) {
+    if(page_==Page::Bench || benchConfirm_ || confirmDiscard_ || helpMode_)return;
     if(!std::isfinite(yawRadians) || !std::isfinite(pitchRadians))return;
     yawOffset_=std::remainder(yawOffset_+std::clamp(yawRadians,-0.2,0.2),2*pi);
-    pitchOffset_=std::clamp(pitchOffset_+std::clamp(pitchRadians,-0.2,0.2),-0.4,0.4);
+    pitchOffset_=std::clamp(pitchOffset_+std::clamp(pitchRadians,-0.2,0.2),-1.47,1.32);
+    if(yawRadians!=0 || pitchRadians!=0)cameraPreset_=3;
 }
 
 void App::key(const std::string& name,bool ctrl,bool shift) {
+    if(page_==Page::Bench && !ctrl && (name=="n" || name=="N")) {
+        action(Action::BenchNeutral);return;
+    }
+    if(benchConfirm_) {
+        if(name=="Escape")action(Action::Back);
+        else if(name=="Tab" || name=="ArrowRight" || name=="ArrowDown")
+            action(Action::FocusNext);
+        else if(name=="ArrowLeft" || name=="ArrowUp")
+            action(Action::FocusPrevious);
+        else if(name=="Enter" || name=="Space")action(Action::Confirm);
+        return;
+    }
     if(confirmDiscard_) {
         if(name=="Escape")action(Action::Back);
         else if(name=="Tab")action(shift?Action::FocusPrevious:Action::FocusNext);
@@ -466,6 +807,11 @@ void App::key(const std::string& name,bool ctrl,bool shift) {
         if(name=="o" || name=="O") {action(Action::Load);return;}
         if(name=="n" || name=="N") {action(Action::NewProject);return;}
         if(name=="z" || name=="Z") {action(Action::Undo);return;}
+        if(name=="l" || name=="L") {action(Action::LoadRecording);return;}
+        if(name=="m" || name=="M") {
+            action(shift?Action::ImportStl:Action::ImportObj);return;
+        }
+        if(name=="e" || name=="E") {action(Action::ExportObj);return;}
     }
     if(editing_) {
         if(name=="Enter")commitEdit();
@@ -479,6 +825,9 @@ void App::key(const std::string& name,bool ctrl,bool shift) {
     }
     if(name=="Tab") {action(shift?Action::FocusPrevious:Action::FocusNext);return;}
     if(name=="F1") {action(Action::HelpControls);return;}
+    if(name=="F3") {action(Action::SideView);return;}
+    if(name=="F4") {action(Action::TopView);return;}
+    if(name=="F5") {action(Action::IsoView);return;}
     if(name=="Alt") {action(Action::Menu);return;}
     if(name=="Space") {action(Action::Confirm);return;}
     if(name=="Escape") {action(Action::Back);return;}
@@ -500,6 +849,14 @@ void App::key(const std::string& name,bool ctrl,bool shift) {
     if(focusRegion_==4 && (name=="ArrowUp" || name=="ArrowDown")) {
         focusRegion_=name=="ArrowUp"?3:5;return;
     }
+    if(focusRegion_==5 && page_==Page::Bench) {
+        if(name=="ArrowLeft" || name=="ArrowUp")
+            benchFocus_=(benchFocus_+6)%7;
+        else if(name=="ArrowRight" || name=="ArrowDown")
+            benchFocus_=(benchFocus_+1)%7;
+        else if(name=="Enter" || name=="Space")action(Action::Confirm);
+        return;
+    }
     if(focusRegion_==5) {
         if(name=="ArrowUp")action(Action::FocusPrevious);
         else if(name=="ArrowDown")action(Action::FocusNext);
@@ -507,28 +864,39 @@ void App::key(const std::string& name,bool ctrl,bool shift) {
     }
     if(name=="ArrowUp") {
         if(focusRegion_==2)action(Action::PrevPart);
-        else if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+9)%10;
+        else if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+10)%11;
         else action(Action::PrevField);
     } else if(name=="ArrowDown") {
         if(focusRegion_==2)action(Action::NextPart);
-        else if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+1)%10;
+        else if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+1)%11;
         else action(Action::NextField);
     } else if(name=="ArrowLeft") {
-        if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+9)%10;
+        if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+10)%11;
         else if(focusRegion_==2)action(Action::PrevPart);
         else action(Action::Decrease);
     } else if(name=="ArrowRight") {
-        if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+1)%10;
+        if(focusRegion_==1)toolbarFocus_=(toolbarFocus_+1)%11;
         else if(focusRegion_==2)action(Action::NextPart);
         else action(Action::Increase);
     } else if(name=="Enter" || name==" ")action(Action::Confirm);
-    else if(name.size()==1 && name[0]>='1' && name[0]<='6') {
+    else if(name.size()==1 && name[0]>='1' && name[0]<='9') {
+        leaveBench();
         selectedPart_=name[0]-'1';selectedField_=0;page_=Page::Garage;focusRegion_=2;
     }
 }
 
 void App::click(int x,int y) {
     if(x<0 || x>=1280 || y<0 || y>=720)return;
+    if(benchConfirm_) {
+        if(y>=420 && y<458 && x>=354 && x<924) {
+            if(x<502)benchConfirmFocus_=0;
+            else if(x>=512 && x<692)benchConfirmFocus_=1;
+            else if(x>=702)benchConfirmFocus_=2;
+            else return;
+            action(Action::Confirm);
+        } else if(x<330 || x>=950 || y<214 || y>=480)action(Action::Back);
+        return;
+    }
     if(confirmDiscard_) {
         if(y>=420 && y<458) {
             if(x>=354 && x<475)discardFocus_=0;
@@ -570,15 +938,42 @@ void App::click(int x,int y) {
         }
     }
     if(y>=workbench::toolbarY+5 && y<workbench::toolbarY+39) {
-        for(int i=0;i<10;++i) {
+        for(int i=0;i<11;++i) {
             const auto& tool=workbench::tools[i];
             if(x>=tool.x && x<tool.x+tool.w) {
                 toolbarFocus_=i;focusRegion_=1;action(tool.action);return;
             }
         }
     }
+    if((page_==Page::Garage || page_==Page::Flight ||
+        (page_==Page::Ground && recording_.calibrated)) &&
+       y>=workbench::viewY+5 && y<workbench::viewY+33) {
+        for(int i=0;i<3;++i) {
+            const int start=workbench::viewX+467+i*68;
+            if(x>=start && x<start+62) {
+                action(i==0?Action::SideView:i==1?Action::TopView:Action::IsoView);
+                return;
+            }
+        }
+    }
+    if(page_==Page::Bench) {
+        if(x>=976 && x<1264) {
+            if(y>=318 && y<351) {benchFocus_=0;focusRegion_=5;action(Action::BenchConnect);}
+            else if(y>=359 && y<392) {benchFocus_=1;focusRegion_=5;action(Action::BenchDisconnect);}
+            else if(y>=410 && y<443) {
+                benchFocus_=x<1120?2:3;focusRegion_=5;
+                action(x<1120?Action::BenchAxisPrev:Action::BenchAxisNext);
+            } else if(y>=470 && y<503) {
+                benchFocus_=x<1120?4:5;focusRegion_=5;
+                action(x<1120?Action::BenchPulseMinus:Action::BenchPulsePlus);
+            } else if(y>=530 && y<563) {
+                benchFocus_=6;focusRegion_=5;action(Action::BenchNeutral);
+            }
+        }
+        return;
+    }
     if(x<workbench::treeW && y>=workbench::treeRowY &&
-       y<workbench::treeRowY+6*workbench::treeRowH) {
+       y<workbench::treeRowY+9*workbench::treeRowH) {
         selectedPart_=(y-workbench::treeRowY)/workbench::treeRowH;
         selectedField_=0;page_=Page::Garage;focusRegion_=2;playing_=false;
         status_=std::string(workbench::partNames[selectedPart_])+" selected.";
@@ -598,14 +993,23 @@ void App::click(int x,int y) {
     }
     if(x>=workbench::inspectorX+16 && x<1264 && y>=635 && y<669) {
         focusRegion_=5;
-        action(page_==Page::Garage?Action::ResetPart:Action::Garage);
+        action(page_==Page::Garage?Action::ResetPart:
+               page_==Page::Ground?(recording_.samples.empty()?Action::LoadRecording:
+                                    Action::CalibrateRecording):Action::Garage);
         return;
     }
-    if(page_!=Page::Ground && x>=314 && x<=919 && y>=604 && y<=660 &&
-       flight_.valid && !flight_.samples.empty()) {
-        simTime_=std::clamp((x-314)/605.0,0.0,1.0)*flight_.samples.back().time;
-        page_=Page::Flight;
-        playing_=false;focusRegion_=4;status_="Flight cursor set from timeline.";
+    if(x>=314 && x<=919 && y>=604 && y<=660) {
+        const double fraction=std::clamp((x-314)/605.0,0.0,1.0);
+        if(page_==Page::Ground && !recording_.samples.empty()) {
+            groundTime_=recording_.samples.front().time+fraction*
+                (recording_.samples.back().time-recording_.samples.front().time);
+            playing_=false;focusRegion_=4;
+            status_="Recorded-data cursor set from timeline.";
+        } else if(page_!=Page::Ground && flight_.valid && !flight_.samples.empty()) {
+            simTime_=fraction*flight_.samples.back().time;
+            page_=Page::Flight;
+            playing_=false;focusRegion_=4;status_="Flight cursor set from timeline.";
+        }
     }
 }
 void App::hover(int x,int y) {
@@ -614,7 +1018,8 @@ void App::hover(int x,int y) {
 }
 void App::wheel(int x,int y,int direction) {
     if(editing_) {commitEdit();if(editing_)return;}
-    if(menuOpen_ || helpMode_ || confirmDiscard_)return;
+    if(menuOpen_ || helpMode_ || confirmDiscard_ || benchConfirm_ ||
+       page_==Page::Bench)return;
     if(x>=workbench::viewX && x<workbench::inspectorX &&
        y>=workbench::viewY && y<workbench::analysisY) {
         zoom_=std::clamp(zoom_+(direction>0?0.1:-0.1),0.65,1.65);
@@ -627,11 +1032,13 @@ void App::wheel(int x,int y,int direction) {
 }
 
 void App::demoAt(double seconds) {
+    leaveBench();
     const int stage=seconds<6?0:seconds<12?1:seconds<18?2:seconds<26?3:
         seconds<34?4:seconds<44?5:seconds<73?6:7;
     if(stage!=demoStage_) {
         demoStage_=stage;
         rocket_=Rocket{};
+        reference_=ReferenceMesh{};
         if(stage>=1) {rocket_.material=Material::CarbonLaminate;rocket_.bodyDensity=1500;}
         if(stage>=2) {rocket_.noseProfile=NoseProfile::TangentOgive;rocket_.noseLength=0.115;}
         if(stage>=3) {
@@ -655,7 +1062,7 @@ void App::demoAt(double seconds) {
             stage==4?"Avionics: move the mass to change the CG.":
             stage==5?"Motor and recovery settings update the flight model.":
             stage==6?"Time-compressed host replay of a calculated flight.":
-            "USB discovery only; there is no live telemetry.";
+            "Ground station / recorded CSV import, no live telemetry.";
     }
     demoMode_=true;
     if(stage==6 && flight_.valid && !flight_.samples.empty()) {

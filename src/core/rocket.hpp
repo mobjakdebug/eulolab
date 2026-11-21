@@ -53,6 +53,35 @@ struct Rocket {
     double canopyCd = 1.20;
     double canopyArealDensity = 0.09;
     double recoveryFromTail = 0.272;
+
+    // One coaxial, editable insert. The bore can be zero (solid cylinder).
+    // Its center is measured from the tail. It must clear the motor sleeve.
+    bool insertEnabled = false;
+    double insertLength = 0.030;
+    double insertOuterRadius = 0.006;
+    double insertBoreRadius = 0.0;
+    double insertFromTail = 0.19;
+    Material insertMaterial = Material::PVC;
+    double insertDensity = 1280.0;
+
+    // Virtual flight setup. These are illustrative scenario assumptions, not
+    // commands sent to an actuator or a guidance solution for a real vehicle.
+    double launchTiltDeg = 2.0;
+    double launchHeadingDeg = 0.0;
+    double windEast = 1.5;
+    double windNorth = 0.4;
+    double gimbalPitchDeg = 0.0;
+    double gimbalYawDeg = 0.0;
+    double cpFromTail = 0.09;
+    double angularDamping = 0.002;
+
+    // Linked visual reference beside the .eul file. Meshes are neither solids
+    // nor included in mass, aerodynamics or the flight solver.
+    int referenceFormat = 0; // 0 none, 1 reference.obj, 2 reference.stl
+    double referenceUnitMm = 1.0; // mm per imported vertex unit
+    double referenceEastMm = 0.0;
+    double referenceTailMm = 0.0;
+    double referenceNorthMm = 0.0;
     bool valid() const;
 };
 
@@ -64,6 +93,7 @@ struct MassProperties {
     double dry = 0.0;
     double cgFromTail = 0.0;
     double momentPitch = 0.0;
+    double momentRoll = 0.0; // approximate polar moment, kg*m^2
 };
 
 MassProperties massProperties(const Rocket& rocket, double loadedMotorMass,

@@ -11,6 +11,7 @@ import argparse
 import atexit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import re
 import struct
@@ -39,10 +40,14 @@ PAGE = b'''<!doctype html>
   .assist { font-size: .875rem; line-height: 1.5; margin: .7rem 0 0;
             display: flex; justify-content: space-between; gap: 1rem; }
   .assist p { margin: 0; }
-  .assist button { border: 1px solid #a4b4b9; background: #fff; color: #27343b;
-                   font: inherit; padding: .35rem .65rem; cursor: pointer; }
-  .assist button:hover, .assist button:focus-visible { outline: 2px solid #235b93; }
-  .assist button:active { background: #deebf4; }
+  .import { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 1rem;
+            margin-top: .65rem; font-size: .875rem; }
+  .import small { font-size: .8rem; }
+  .assist button, .import button { border: 1px solid #a4b4b9; background: #fff;
+                   color: #27343b; font: inherit; padding: .35rem .65rem; cursor: pointer; }
+  .assist button:hover, .assist button:focus-visible,
+  .import button:hover, .import button:focus-visible { outline: 2px solid #235b93; }
+  .assist button:active, .import button:active { background: #deebf4; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
              overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   nav.sr-only:focus-within { position: fixed; top: 0; left: 0; width: auto; height: auto;
@@ -63,17 +68,33 @@ PAGE = b'''<!doctype html>
       <span id="previewStatus" role="status">Connecting to the native renderer...</span></p>
     <button id="focus" type="button">Focus workbench</button>
   </div>
+  <div class="import">
+    <label for="recording">Open recorded sensor CSV:</label>
+    <input id="recording" type="file" accept=".csv,text/csv" aria-label="Import recorded sensor CSV">
+    <small>Copied to this sandbox for offline playback; not a live device.</small>
+  </div>
+  <div class="import">
+    <label for="mesh">Import visual reference:</label>
+    <input id="mesh" type="file" accept=".obj,.stl" aria-label="Import OBJ or STL reference">
+    <button id="download" type="button">Download visual OBJ</button>
+    <small>File &gt; Export visual OBJ first. Meshes are not CAD solids.</small>
+  </div>
 </main>
 <footer class="sr-only">This is a host framebuffer preview, not a PlayStation 4 recording.</footer>
 <script>
 (() => {
   const canvas = document.getElementById('workbench');
   const focus = document.getElementById('focus');
+  const recording = document.getElementById('recording');
+  const mesh = document.getElementById('mesh');
+  const download = document.getElementById('download');
   const status = document.getElementById('previewStatus');
   const ctx = canvas.getContext('2d', {alpha: false});
   let pending = Promise.resolve(), down = false, mode = '', lastHover = 0, ready = false;
+  let nativePage = 0; // supplied by the C++ app with every framebuffer
   const namedKeys = new Set(['Enter', 'Escape', 'Tab', 'Backspace', 'Alt',
-                             'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'F1']);
+                             'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+                             'F1', 'F3', 'F4', 'F5']);
   function send(message) {
     pending = pending.then(() => fetch('/input', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify(message)}));
@@ -92,17 +113,21 @@ PAGE = b'''<!doctype html>
     const [x, y] = coords(event);
     canvas.focus(); canvas.setPointerCapture(event.pointerId);
     down = true;
-    mode = x >= 244 && x < 960 && y >= 108 && y < 558 ? 'orbit' :
-           x >= 314 && x < 920 && y >= 604 && y <= 660 ? 'timeline' : '';
+    mode = nativePage !== 3 && x >= 244 && x < 960 && y >= 147 && y < 558 ? 'orbit' :
+           nativePage !== 3 && x >= 314 && x < 920 && y >= 604 && y <= 660 ? 'timeline' : '';
     send({type: 'click', x, y});
   });
   canvas.addEventListener('pointermove', event => {
     const [x, y] = coords(event);
     canvas.style.cursor = down && mode === 'orbit' ? 'grabbing' :
-      x >= 244 && x < 960 && y >= 108 && y < 558 ? 'grab' :
-      (y >= 32 && y < 108) || (x < 244 && y >= 170 && y < 482) ||
-      (x >= 960 && y >= 178 && y < 669) ||
-      (x >= 314 && x < 920 && y >= 604 && y <= 660) ? 'pointer' : 'default';
+      nativePage !== 3 && x >= 244 && x < 960 && y >= 147 && y < 558 ? 'grab' :
+      (nativePage !== 3 && x >= 711 && x < 910 && y >= 113 && y < 141) ||
+      (y >= 32 && y < 108) ||
+      (nativePage !== 3 && nativePage !== 2 && x < 244 && y >= 170 && y < 494) ||
+      (nativePage === 3 ? x >= 976 && y >= 318 && y < 563 :
+                            x >= 960 && y >= 178 && y < 669) ||
+      (nativePage !== 3 && x >= 314 && x < 920 && y >= 604 && y <= 660) ?
+      'pointer' : 'default';
     if (!down) {
       if (Date.now() - lastHover > 65) {
         lastHover = Date.now();
@@ -136,12 +161,73 @@ PAGE = b'''<!doctype html>
     }
   });
   focus.addEventListener('click', () => canvas.focus());
+  recording.addEventListener('change', async () => {
+    const file = recording.files && recording.files[0];
+    if (!file) return;
+    if (file.size > 1048576) {
+      status.textContent = 'CSV exceeds the 1 MiB recording limit.';
+      return;
+    }
+    try {
+      await pending;
+      status.textContent = 'Copying recorded CSV into the sandbox...';
+      const response = await fetch('/recording', {method: 'POST',
+        headers: {'Content-Type': 'text/csv'}, body: file});
+      if (!response.ok) throw new Error('CSV upload rejected');
+      await send({type: 'key', name: 'l', ctrl: true, shift: false});
+      status.textContent = 'Native CSV importer checked the file. See the workbench status.';
+      canvas.focus();
+    } catch (err) {
+      status.textContent = 'CSV upload failed; check the format and size.';
+      console.warn('Recording upload failed', err);
+    }
+  });
+  mesh.addEventListener('change', async () => {
+    const file = mesh.files && mesh.files[0];
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['obj', 'stl'].includes(ext) || file.size > 2097152) {
+      status.textContent = 'Only OBJ/STL meshes up to 2 MiB are supported.';
+      return;
+    }
+    try {
+      await pending;
+      status.textContent = 'Copying visual mesh into the sandbox...';
+      const response = await fetch('/mesh/' + ext, {method: 'POST',
+        headers: {'Content-Type': 'application/octet-stream'}, body: file});
+      if (!response.ok) throw new Error('Mesh upload rejected');
+      await send({type: 'key', name: 'm', ctrl: true, shift: ext === 'stl'});
+      status.textContent = 'Native mesh importer checked the file. See the workbench status.';
+      canvas.focus();
+    } catch (err) {
+      status.textContent = 'Mesh upload failed; check the file and size.';
+      console.warn('Mesh upload failed', err);
+    }
+  });
+  download.addEventListener('click', async () => {
+    try {
+      const response = await fetch('/assembly.obj');
+      if (!response.ok) {
+        status.textContent = 'Use File > Export visual OBJ in the native workbench first.';
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url; anchor.download = 'assembly.obj'; anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.textContent = 'Downloaded the visual, non-watertight OBJ.';
+    } catch (err) {
+      status.textContent = 'Visual OBJ download failed.';
+    }
+  });
   async function frame() {
     try {
       await pending;
       if (!document.hidden) {
         const response = await fetch('/frame', {cache: 'no-store'});
         if (!response.ok) throw new Error('Native renderer exited');
+        nativePage = Number(response.headers.get('X-EuloLab-Page') || '0');
         const bitmap = await createImageBitmap(await response.blob());
         ctx.drawImage(bitmap, 0, 0);
         bitmap.close();
@@ -187,12 +273,15 @@ def as_png(raw: bytes) -> bytes:
 
 class Native:
     def __init__(self) -> None:
+        export = ROOT / 'out' / 'assembly.obj'
+        self.initial_export_mtime_ns = export.stat().st_mtime_ns if export.exists() else 0
         self.process = subprocess.Popen(
             [str(ROOT / 'out/eulolab-host'), '--interactive'],
             cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         )
         self.lock = threading.Lock()
         self.last = time.monotonic()
+        self.page = 0
 
     def command(self, line: str) -> None:
         assert self.process.stdin is not None
@@ -207,6 +296,11 @@ class Native:
             self.command('FRAME')
             assert self.process.stdout is not None
             raw = self.process.stdout.read(RAW_SIZE)
+            self.command('PAGE')
+            page = self.process.stdout.read(1)
+            if page not in (b'0', b'1', b'2', b'3'):
+                raise ValueError('Native page state unavailable')
+            self.page = int(page)
             return as_png(raw)
 
     def input(self, line: str) -> None:
@@ -231,7 +325,7 @@ class Native:
 
 
 NAMES = {'Enter', 'Escape', 'Tab', 'Backspace', 'Alt', 'Space',
-         'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F1'}
+         'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F1', 'F3', 'F4', 'F5'}
 SINGLE = re.compile(r'^[a-zA-Z0-9.\-]$')
 
 
@@ -282,6 +376,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-EuloLab-Page', str(self.native.page))
         self.end_headers()
         self.wfile.write(body)
 
@@ -296,10 +391,82 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, self.native.render(), 'image/png')
             except (BrokenPipeError, OSError, ValueError):
                 self.respond(503, b'native renderer unavailable\n', 'text/plain; charset=utf-8')
+        elif self.path == '/assembly.obj':
+            try:
+                self.native.render()  # wait for any preceding native Export action
+            except (BrokenPipeError, OSError, ValueError):
+                self.respond(503, b'native renderer unavailable\n',
+                             'text/plain; charset=utf-8')
+                return
+            path = ROOT / 'out' / 'assembly.obj'
+            if (not path.is_file() or path.stat().st_size > 2097152 or
+                    path.stat().st_mtime_ns <= self.native.initial_export_mtime_ns):
+                self.respond(404, b'Export visual OBJ in the workbench first.\n',
+                             'text/plain; charset=utf-8')
+            else:
+                self.respond(200, path.read_bytes(), 'model/obj')
         else:
             self.respond(404, b'not found\n', 'text/plain; charset=utf-8')
 
     def do_POST(self) -> None:
+        if self.path in ('/mesh/obj', '/mesh/stl'):
+            extension = self.path.rsplit('/', 1)[-1]
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 1 <= length <= 2097152 or self.headers.get('Content-Type') != 'application/octet-stream':
+                    raise ValueError('Mesh size or media type')
+                body = self.rfile.read(length)
+                if len(body) != length or (extension == 'obj' and b'\x00' in body):
+                    raise ValueError('Incomplete or binary OBJ')
+                destination = ROOT / 'out' / f'reference.{extension}'
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                temporary = destination.with_name(f'reference.upload.{extension}')
+                with self.native.lock:
+                    try:
+                        temporary.write_bytes(body)
+                        check = subprocess.run([str(ROOT / 'out/eulolab-host'),
+                                                '--check-mesh', str(temporary)],
+                                               cwd=ROOT, timeout=5, capture_output=True)
+                        if check.returncode != 0:
+                            raise ValueError('Native mesh importer rejected the file')
+                        os.replace(temporary, destination)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+            except (ValueError, subprocess.TimeoutExpired, BrokenPipeError, OSError):
+                self.respond(400, b'invalid visual mesh upload\n', 'text/plain; charset=utf-8')
+                return
+            self.respond(204, b'', 'text/plain; charset=utf-8')
+            return
+        if self.path == '/recording':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 48 <= length <= 1048576 or self.headers.get('Content-Type') != 'text/csv':
+                    raise ValueError('Recording size or media type')
+                body = self.rfile.read(length)
+                header = b'time_s,altitude_m,gx_deg_s,gy_deg_s,gz_deg_s'
+                if len(body) != length or b'\x00' in body or not body.startswith(header + b'\n'):
+                    raise ValueError('Recording header or binary content')
+                body.decode('ascii')
+                destination = ROOT / 'out' / 'recording.csv'
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                temporary = destination.with_suffix('.csv.upload')
+                with self.native.lock:
+                    try:
+                        temporary.write_bytes(body)
+                        check = subprocess.run([str(ROOT / 'out/eulolab-host'),
+                                                '--check-recording', str(temporary)],
+                                               cwd=ROOT, timeout=5, capture_output=True)
+                        if check.returncode != 0:
+                            raise ValueError('Native CSV importer rejected the file')
+                        os.replace(temporary, destination)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+            except (ValueError, subprocess.TimeoutExpired, UnicodeDecodeError,
+                    BrokenPipeError, OSError):
+                self.respond(400, b'invalid recorded CSV\n', 'text/plain; charset=utf-8')
+                return
+            self.respond(204, b'', 'text/plain; charset=utf-8')
+            return
         if self.path != '/input':
             self.respond(404, b'not found\n', 'text/plain; charset=utf-8')
             return

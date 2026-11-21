@@ -1,13 +1,109 @@
 #include "rocket.hpp"
 #include <algorithm>
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <iterator>
 
 namespace eulo {
 namespace {
 constexpr double pi = 3.14159265358979323846;
 struct Part { double mass, x, intrinsicI; };
+struct ScalarField { const char* key; double Rocket::*member; };
+constexpr ScalarField scalars[] = {
+    {"bodyLength",&Rocket::bodyLength},{"radius",&Rocket::radius},
+    {"wall",&Rocket::wall},{"bodyDensity",&Rocket::bodyDensity},
+    {"airframeCd",&Rocket::airframeCd},{"noseLength",&Rocket::noseLength},
+    {"noseWall",&Rocket::noseWall},{"noseDensity",&Rocket::noseDensity},
+    {"finSpan",&Rocket::finSpan},{"finRootChord",&Rocket::finRootChord},
+    {"finTipChord",&Rocket::finTipChord},{"finSweep",&Rocket::finSweep},
+    {"finThickness",&Rocket::finThickness},{"finSetback",&Rocket::finSetback},
+    {"finDensity",&Rocket::finDensity},{"electronicsMass",&Rocket::electronicsMass},
+    {"electronicsFromTail",&Rocket::electronicsFromTail},
+    {"motorFromTail",&Rocket::motorFromTail},{"mountLength",&Rocket::mountLength},
+    {"mountBoreRadius",&Rocket::mountBoreRadius},{"mountWall",&Rocket::mountWall},
+    {"mountDensity",&Rocket::mountDensity},
+    {"parachuteDiameter",&Rocket::parachuteDiameter},{"canopyCd",&Rocket::canopyCd},
+    {"canopyArealDensity",&Rocket::canopyArealDensity},
+    {"recoveryFromTail",&Rocket::recoveryFromTail},
+    {"insertLength",&Rocket::insertLength},
+    {"insertOuterRadius",&Rocket::insertOuterRadius},
+    {"insertBoreRadius",&Rocket::insertBoreRadius},
+    {"insertFromTail",&Rocket::insertFromTail},
+    {"insertDensity",&Rocket::insertDensity},
+    {"launchTiltDeg",&Rocket::launchTiltDeg},
+    {"launchHeadingDeg",&Rocket::launchHeadingDeg},
+    {"windEast",&Rocket::windEast},{"windNorth",&Rocket::windNorth},
+    {"gimbalPitchDeg",&Rocket::gimbalPitchDeg},
+    {"gimbalYawDeg",&Rocket::gimbalYawDeg},
+    {"cpFromTail",&Rocket::cpFromTail},
+    {"angularDamping",&Rocket::angularDamping},
+    {"referenceUnitMm",&Rocket::referenceUnitMm},
+    {"referenceEastMm",&Rocket::referenceEastMm},
+    {"referenceTailMm",&Rocket::referenceTailMm},
+    {"referenceNorthMm",&Rocket::referenceNorthMm}
+};
+constexpr const char* integers[] = {
+    "material","noseProfile","noseMaterial","finMaterial","finCount",
+    "motorIndex","insertEnabled","insertMaterial","referenceFormat"
+};
+
+bool readEul(FILE* file,Rocket& candidate,bool version2) {
+    bool seen[std::size(scalars)+std::size(integers)] = {};
+    int values[std::size(integers)] = {};
+    char line[256];
+    while (std::fgets(line,sizeof(line),file)) {
+        const size_t length=std::strlen(line);
+        if(length==0 || (line[length-1]!='\n' && !std::feof(file)))return false;
+        while(size_t n=std::strlen(line)) {
+            if(line[n-1]=='\n' || line[n-1]=='\r')line[n-1]='\0';
+            else break;
+        }
+        char* equal=std::strchr(line,'=');
+        if(!equal || equal==line || std::strchr(equal+1,'='))return false;
+        *equal='\0';
+        const char* text=equal+1;
+        bool found=false;
+        for(size_t i=0;i<std::size(scalars);++i) {
+            if(std::strcmp(line,scalars[i].key)!=0)continue;
+            if(seen[i])return false;
+            char* end=nullptr;errno=0;
+            const double number=std::strtod(text,&end);
+            if(text==end || *end || errno==ERANGE || !std::isfinite(number))return false;
+            candidate.*(scalars[i].member)=number;
+            seen[i]=true;found=true;break;
+        }
+        if(found)continue;
+        for(size_t i=0;i<std::size(integers);++i) {
+            if(std::strcmp(line,integers[i])!=0)continue;
+            if(seen[i+std::size(scalars)])return false;
+            char* end=nullptr;errno=0;
+            const long number=std::strtol(text,&end,10);
+            if(text==end || *end || errno==ERANGE || number<INT_MIN || number>INT_MAX)return false;
+            values[i]=static_cast<int>(number);
+            seen[i+std::size(scalars)]=true;found=true;break;
+        }
+        if(!found)return false;
+    }
+    if(std::ferror(file))return false;
+    for(size_t i=0;i<std::size(scalars);++i)
+        if(!seen[i] && (version2 || i<std::size(scalars)-4))return false;
+    for(size_t i=0;i<std::size(integers);++i)
+        if(!seen[std::size(scalars)+i] && (version2 || i<std::size(integers)-1))return false;
+    if(values[6]!=0 && values[6]!=1)return false;
+    candidate.material=static_cast<Material>(values[0]);
+    candidate.noseProfile=static_cast<NoseProfile>(values[1]);
+    candidate.noseMaterial=static_cast<Material>(values[2]);
+    candidate.finMaterial=static_cast<FinMaterial>(values[3]);
+    candidate.finCount=values[4];candidate.motorIndex=values[5];
+    candidate.insertEnabled=values[6]!=0;
+    candidate.insertMaterial=static_cast<Material>(values[7]);
+    candidate.referenceFormat=values[8];
+    return true;
+}
 }
 
 const char* materialName(Material material) {
@@ -89,7 +185,34 @@ bool Rocket::valid() const {
            std::isfinite(canopyArealDensity) && canopyArealDensity >= 0.01 &&
            canopyArealDensity <= 1.0 &&
            std::isfinite(recoveryFromTail) && recoveryFromTail >= 0 &&
-           recoveryFromTail <= bodyLength;
+           recoveryFromTail <= bodyLength &&
+           std::isfinite(insertLength) && insertLength >= 0.002 && insertLength <= 0.5 &&
+           std::isfinite(insertOuterRadius) && insertOuterRadius >= 0.001 &&
+           insertOuterRadius <= 0.04 &&
+           std::isfinite(insertBoreRadius) && insertBoreRadius >= 0 &&
+           (insertBoreRadius == 0 || insertOuterRadius-insertBoreRadius >= 0.0004) &&
+           static_cast<int>(insertMaterial) >= 0 && static_cast<int>(insertMaterial) <= 2 &&
+           std::isfinite(insertDensity) && insertDensity >= 80 && insertDensity <= 8000 &&
+           std::isfinite(insertFromTail) && insertFromTail >= 0 &&
+           insertFromTail <= bodyLength &&
+           (!insertEnabled || (insertOuterRadius <= radius-wall &&
+               insertFromTail-insertLength*0.5 >= mountLength &&
+               insertFromTail+insertLength*0.5 <= bodyLength)) &&
+           std::isfinite(launchTiltDeg) && launchTiltDeg >= 0 && launchTiltDeg <= 20 &&
+           std::isfinite(launchHeadingDeg) && launchHeadingDeg >= -180 &&
+           launchHeadingDeg <= 180 &&
+           std::isfinite(windEast) && std::fabs(windEast) <= 30 &&
+           std::isfinite(windNorth) && std::fabs(windNorth) <= 30 &&
+           std::isfinite(gimbalPitchDeg) && std::fabs(gimbalPitchDeg) <= 5 &&
+           std::isfinite(gimbalYawDeg) && std::fabs(gimbalYawDeg) <= 5 &&
+           std::isfinite(cpFromTail) && cpFromTail >= 0 && cpFromTail <= bodyLength &&
+           std::isfinite(angularDamping) && angularDamping >= 0 &&
+           angularDamping <= 0.1 && referenceFormat >= 0 && referenceFormat <= 2 &&
+           std::isfinite(referenceUnitMm) && referenceUnitMm >= 0.01 &&
+           referenceUnitMm <= 1000 &&
+           std::isfinite(referenceEastMm) && std::fabs(referenceEastMm) <= 3000 &&
+           std::isfinite(referenceTailMm) && std::fabs(referenceTailMm) <= 3000 &&
+           std::isfinite(referenceNorthMm) && std::fabs(referenceNorthMm) <= 3000;
 }
 
 double noseRadius(const Rocket& rocket, double fraction) {
@@ -129,6 +252,8 @@ MassProperties massProperties(const Rocket& r, double motorMass, double propella
         r.mountLength*r.mountDensity;
     const double canopyMass = r.parachuteDiameter > 0 ?
         pi*r.parachuteDiameter*r.parachuteDiameter/4.0*r.canopyArealDensity + 0.002 : 0.0;
+    const double insertMass = r.insertEnabled ? pi*(r.insertOuterRadius*r.insertOuterRadius-
+        r.insertBoreRadius*r.insertBoreRadius)*r.insertLength*r.insertDensity : 0.0;
     const Part parts[] = {
         {bodyMass, r.bodyLength*0.5, bodyMass*r.bodyLength*r.bodyLength/12.0},
         {mountMass,r.mountLength*0.5,mountMass*r.mountLength*r.mountLength/12.0},
@@ -137,7 +262,10 @@ MassProperties massProperties(const Rocket& r, double motorMass, double propella
         {finMass, finCg, finMass*r.finRootChord*r.finRootChord/12.0},
         {r.electronicsMass, r.electronicsFromTail, 0.0},
         {canopyMass, r.recoveryFromTail, 0.0},
-        {motorMass, r.motorFromTail, motorMass*0.07*0.07/12.0}
+        {motorMass, r.motorFromTail, motorMass*0.07*0.07/12.0},
+        {insertMass, r.insertFromTail, insertMass*(r.insertLength*r.insertLength+
+            3*(r.insertOuterRadius*r.insertOuterRadius+
+               r.insertBoreRadius*r.insertBoreRadius))/12.0}
     };
     double weighted = 0;
     for (const Part& part : parts) {
@@ -151,6 +279,13 @@ MassProperties massProperties(const Rocket& r, double motorMass, double propella
             const double dx = part.x - result.cgFromTail;
             result.momentPitch += part.intrinsicI + part.mass*dx*dx;
         }
+        result.momentRoll = bodyMass*(r.radius*r.radius+inner*inner)/2.0 +
+            mountMass*(mountOuter*mountOuter+r.mountBoreRadius*r.mountBoreRadius)/2.0 +
+            noseMass*r.radius*r.radius/4.0 +
+            finMass*std::pow(r.radius+r.finSpan*0.5,2) +
+            (r.electronicsMass+canopyMass+motorMass)*r.radius*r.radius/4.0 +
+            insertMass*(r.insertOuterRadius*r.insertOuterRadius+
+                        r.insertBoreRadius*r.insertBoreRadius)/2.0;
     }
     return result;
 }
@@ -160,19 +295,16 @@ bool saveProject(const Rocket& r, const char* path) {
     const std::string temporary = std::string(path) + ".tmp";
     FILE* f = std::fopen(temporary.c_str(),"wb");
     if (!f) return false;
-    const double values[] = {
-        r.bodyLength,r.radius,r.wall,r.bodyDensity,r.airframeCd,
-        r.noseLength,r.noseWall,r.noseDensity,
-        r.finSpan,r.finRootChord,r.finTipChord,r.finSweep,r.finThickness,r.finSetback,r.finDensity,
-        r.electronicsMass,r.electronicsFromTail,r.motorFromTail,
-        r.mountLength,r.mountBoreRadius,r.mountWall,r.mountDensity,
-        r.parachuteDiameter,r.canopyCd,r.canopyArealDensity,r.recoveryFromTail
-    };
-    bool ok = std::fputs("EULOROCKET3\n", f) >= 0;
-    for (double v : values) ok = ok && std::fprintf(f,"%.17g\n",v) > 0;
-    ok = ok && std::fprintf(f,"%d %d %d %d %d %d\n",
-        static_cast<int>(r.material),static_cast<int>(r.noseProfile),
-        static_cast<int>(r.noseMaterial),static_cast<int>(r.finMaterial),r.finCount,r.motorIndex) > 0;
+    bool ok=std::fputs("EULOLAB/2\n",f)>=0;
+    for(const ScalarField& field:scalars)
+        if(ok)ok=std::fprintf(f,"%s=%.17g\n",field.key,r.*(field.member))>0;
+    const int values[]={static_cast<int>(r.material),static_cast<int>(r.noseProfile),
+        static_cast<int>(r.noseMaterial),static_cast<int>(r.finMaterial),r.finCount,
+        r.motorIndex,r.insertEnabled?1:0,static_cast<int>(r.insertMaterial),
+        r.referenceFormat};
+    static_assert(std::size(values)==std::size(integers));
+    for(size_t i=0;i<std::size(integers);++i)
+        if(ok)ok=std::fprintf(f,"%s=%d\n",integers[i],values[i])>0;
     const bool closed = std::fclose(f) == 0;
     if (!ok || !closed || std::rename(temporary.c_str(), path) != 0) {
         std::remove(temporary.c_str());
@@ -189,7 +321,11 @@ bool loadProject(Rocket& rocket, const char* path) {
     Rocket candidate;
     int material=-1, profile=-1, noseMaterial=-1, finMaterial=-1;
     bool ok = std::fgets(header,sizeof(header),f) != nullptr;
-    if (ok && std::strcmp(header,"EULOROCKET3\n")==0) {
+    if (ok && (std::strcmp(header,"EULOLAB/1\n")==0 ||
+               std::strcmp(header,"EULOLAB/2\n")==0)) {
+        ok=readEul(f,candidate,std::strcmp(header,"EULOLAB/2\n")==0);
+        material=static_cast<int>(candidate.material);
+    } else if (ok && std::strcmp(header,"EULOROCKET3\n")==0) {
         double* values[] = {
             &candidate.bodyLength,&candidate.radius,&candidate.wall,&candidate.bodyDensity,&candidate.airframeCd,
             &candidate.noseLength,&candidate.noseWall,&candidate.noseDensity,
@@ -223,7 +359,8 @@ bool loadProject(Rocket& rocket, const char* path) {
         candidate.noseDensity = candidate.bodyDensity;
         candidate.noseMaterial = static_cast<Material>(material);
     } else ok = false;
-    if (ok && std::strcmp(header,"EULOROCKET3\n") != 0) {
+    if (ok && (std::strcmp(header,"EULOROCKET1\n")==0 ||
+               std::strcmp(header,"EULOROCKET2\n")==0)) {
         candidate.electronicsFromTail = candidate.bodyLength*0.66;
         candidate.recoveryFromTail = candidate.bodyLength*0.80;
         candidate.finRootChord = std::min(candidate.finRootChord,candidate.bodyLength*0.45);

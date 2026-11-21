@@ -2,6 +2,8 @@
 // VideoOut + direct memory follows the documented OpenOrbis graphics sample
 // API contract; no Linux, browser, SDL or network service runs on the PS4.
 #include "ui/app.hpp"
+#include "ps4_bench_usb.hpp"
+#include "bench_config.hpp"
 #include <orbis/libkernel.h>
 #include <orbis/VideoOut.h>
 #include <orbis/Pad.h>
@@ -20,23 +22,28 @@ namespace {
 constexpr int width=1280,height=720,buffers=2;
 constexpr size_t frameBytes=static_cast<size_t>(width)*height*sizeof(uint32_t);
 
-// Only discovery is enabled. USB-to-serial transfer is NOT implemented yet;
-// never represent an enumerated device as an active telemetry connection.
-int scanUsb(eulo::App& app) {
+// Enumeration is informational; only the explicit Bench page may open the
+// pinned board, check its vendor interface and perform a nonce handshake.
+void scanUsb(eulo::App& app,const eulo::OrbisBenchUsb& usb) {
+    if(!usb.configured()) {
+        app.setUsbStatus("VID/PID not configured");return;
+    }
     libusb_device** devices=nullptr;
     const int count=sceUsbdGetDeviceList(&devices);
-    if(count<0) { app.setUsbStatus("USB discovery error"); return count; }
-    int known=0;
-    for(int i=0;i<count;++i) {
-        struct libusb_device_descriptor desc{};
-        if(devices && sceUsbdGetDeviceDescriptor(devices[i],&desc)==0 &&
-            (desc.bDeviceClass==2 || desc.idVendor==0x10c4 || desc.idVendor==0x1a86)) ++known;
+    if(count<0) {
+        if(devices)sceUsbdFreeDeviceList(devices);
+        app.setUsbStatus("USB enumeration failed");return;
     }
-    if(devices) sceUsbdFreeDeviceList(devices);
-    char label[72];
-    std::snprintf(label,sizeof(label),known?"USB serial candidates: %d":"No USB serial device",known);
+    int known=0;
+    for(int i=0;devices && i<count;++i) {
+        libusb_device_descriptor desc{};
+        if(sceUsbdGetDeviceDescriptor(devices[i],&desc)==0 &&
+           desc.idVendor==usb.vendor() && desc.idProduct==usb.product())++known;
+    }
+    if(devices)sceUsbdFreeDeviceList(devices);
+    char label[64];
+    std::snprintf(label,sizeof(label),"Bench USB ID matches: %d",known);
     app.setUsbStatus(label);
-    return count;
 }
 
 struct Display {
@@ -100,9 +107,11 @@ void control(eulo::App& app,uint32_t pressed) {
     if(pressed&ORBIS_PAD_BUTTON_DOWN) app.key("ArrowDown");
     if(pressed&ORBIS_PAD_BUTTON_LEFT) app.key("ArrowLeft");
     if(pressed&ORBIS_PAD_BUTTON_RIGHT) app.key("ArrowRight");
-    if(pressed&ORBIS_PAD_BUTTON_SQUARE) app.action(eulo::Action::Save);
+    if(pressed&ORBIS_PAD_BUTTON_SQUARE)
+        app.action(app.page()==eulo::Page::Bench?
+                   eulo::Action::BenchNeutral:eulo::Action::Save);
     if(pressed&ORBIS_PAD_BUTTON_OPTIONS) app.action(eulo::Action::Menu);
-    if(pressed&ORBIS_PAD_BUTTON_R3) app.action(eulo::Action::FitView);
+    if(pressed&ORBIS_PAD_BUTTON_R3) app.action(eulo::Action::CycleView);
     if(pressed&ORBIS_PAD_BUTTON_TRIANGLE)
         app.action(app.page()==eulo::Page::Ground?eulo::Action::Garage:eulo::Action::Ground);
     if(pressed&ORBIS_PAD_BUTTON_CROSS) app.action(eulo::Action::Confirm);
@@ -110,13 +119,16 @@ void control(eulo::App& app,uint32_t pressed) {
 } // namespace
 
 int main() {
+    eulo::OrbisBenchUsb usb(EULO_BENCH_VID,EULO_BENCH_PID);
+    // Nonce detects stale/cross-session replies; it is not authentication.
+    eulo::BenchLink benchLink(usb,static_cast<uint32_t>(sceKernelGetProcessTime()));
     eulo::App app;
     if(!app.init("/app0/assets/font-atlas.bin","/app0/assets/motors",
-                 "/data/eulolab/project.ini"))return 1;
+                 "/data/eulolab/project.eul"))return 1;
     // The console has a controller but no text-entry backend in this build.
     // Numeric values step on X or the D-pad rather than opening a dead textbox.
     app.setTextEntryAvailable(false);
-    app.setRuntimeLabel("ORBIS BUILD / MODEL ONLY");
+    app.setRuntimeLabel("ORBIS BUILD / CONSOLE UNVERIFIED");
     if(mkdir("/data/eulolab",0755)<0 && errno!=EEXIST) {
         // Simulation still works even if sandbox policy forbids local storage.
     }
@@ -127,11 +139,13 @@ int main() {
     sceUserServiceGetInitialUser(&user);
     const int pad=scePadInit()==0?scePadOpen(user,0,0,nullptr):-1;
     uint32_t previous=0;
+    bool padWasConnected=false;
     bool usbReady=false;
     if(sceSysmoduleLoadModule(ORBIS_SYSMODULE_USBD)==0 && sceUsbdInit()==0) {
         usbReady=true;
-        scanUsb(app);
-    } else app.setUsbStatus("USB unavailable on this PS4");
+        app.setBenchControl(&benchLink);
+        scanUsb(app,usb);
+    } else app.setUsbStatus("USB module unavailable");
     uint64_t last=sceKernelGetProcessTime(),lastScan=last;
     for(;;) {
         const uint64_t now=sceKernelGetProcessTime();
@@ -150,10 +164,16 @@ int main() {
                 app.orbit(stick(state.rightStick.x)*step,
                           -stick(state.rightStick.y)*step);
                 previous=state.buttons;
-            } else previous=0;
+                padWasConnected=true;
+            } else {
+                previous=0;
+                if(padWasConnected && app.page()==eulo::Page::Bench)
+                    app.action(eulo::Action::BenchDisconnect);
+                padWasConnected=false;
+            }
         }
         if(usbReady && app.page()==eulo::Page::Ground && now-lastScan>5000000) {
-            scanUsb(app);lastScan=now;
+            scanUsb(app,usb);lastScan=now;
         }
         app.tick(dt);
         eulo::Canvas canvas(display.pixels(),width,height,app.font());
