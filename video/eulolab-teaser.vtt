@@ -1,0 +1,33 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.000
+EuloLab. Shape the model. Read the flight.
+Native C++ host capture, not PS4 footage. Original instrumental score; no dialogue.
+
+00:00:03.000 --> 00:00:04.500
+Design: change the part, see the model respond.
+52 editable properties across 9 sections.
+
+00:00:04.500 --> 00:00:09.667
+Actual host workbench: the inspector shows the body, nose and fin properties.
+The assembly and its calculated mass and trajectory figures change between shots.
+
+00:00:09.667 --> 00:00:11.333
+Flight: altitude is not the whole story.
+The educational open-loop model includes 3D position, attitude, ground range and Mach.
+
+00:00:11.333 --> 00:00:19.500
+Actual host renderer: a time-compressed calculated flight. The camera briefly crops
+into the native path and attitude view. Model only, not flight-rated or PS4 footage.
+
+00:00:19.500 --> 00:00:21.000
+USB bench: configure the link and keep it separate from flight.
+The profile is for compatible EuloBench/2 devices only.
+
+00:00:21.000 --> 00:00:25.500
+Actual host workbench: USB profile, requested pins and manual command channels.
+No board is connected; these are not measurements of real servo travel.
+
+00:00:25.500 --> 00:00:30.000
+EuloLab. Build the model. Question the result.
+PS4 and servo hardware have not yet been tested. Live sensors and LoRa are not implemented.

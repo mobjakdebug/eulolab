@@ -3,7 +3,7 @@ CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra -Wpedantic -Isrc
 CORE = src/core/rocket.cpp src/core/motor.cpp src/core/flight.cpp src/core/telemetry.cpp src/core/mesh.cpp src/core/bench_profile.cpp src/core/bench_link.cpp
 UI = src/ui/canvas.cpp src/ui/rocket_view.cpp src/ui/app.cpp src/ui/app_draw.cpp
 HEADERS = $(wildcard src/core/*.hpp src/ui/*.hpp)
-.PHONY: all test preview ps4 video clean
+.PHONY: all test preview ps4 video teaser clean
 all: out/eulolab-host
 
 out:
@@ -39,6 +39,10 @@ ps4:
 
 video: out/eulolab-host
 	python3 tools/make_video.py
+
+# 30-second editorial cut of real host frames; Pillow/numpy + ffmpeg required.
+teaser: out/eulolab-host
+	python3 tools/make_teaser.py
 
 clean:
 	rm -rf out

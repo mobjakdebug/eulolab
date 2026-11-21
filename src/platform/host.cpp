@@ -68,6 +68,23 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    // Sparse capture for editorial use. Each input line is a demo timestamp;
+    // each response is exactly one native BGRA framebuffer. No interpolated
+    // UI, fabricated telemetry or browser-rendered footage is introduced.
+    if(argc==2 && std::strcmp(argv[1],"--demo-times")==0) {
+        char line[80];
+        while(std::fgets(line,sizeof(line),stdin)) {
+            char* end=nullptr;
+            const double time=std::strtod(line,&end);
+            if(end==line || (*end!='\n' && *end!='\0') ||
+               !std::isfinite(time) || time<0 || time>240) return 2;
+            app.demoAt(time);
+            app.draw(canvas,time);
+            if(std::fwrite(pixels.data(),sizeof(uint32_t),pixels.size(),stdout)!=pixels.size() ||
+               std::fflush(stdout)!=0)return 3;
+        }
+        return std::ferror(stdin)?3:0;
+    }
     if(argc>2 && std::strcmp(argv[1],"--screenshot")==0) {
         const double time=argc>3?std::atof(argv[3]):9.0;
         if(time<0 || time>240)return 2;
@@ -88,6 +105,6 @@ int main(int argc, char** argv) {
             width,height);
         return 0;
     }
-    std::fprintf(stderr,"Usage: %s --interactive | --stats | --screenshot OUTPUT.ppm [demo_second] | --demo-raw [fps] [seconds]\n",argv[0]);
+    std::fprintf(stderr,"Usage: %s --interactive | --stats | --screenshot OUTPUT.ppm [demo_second] | --demo-raw [fps] [seconds] | --demo-times\n",argv[0]);
     return 2;
 }
