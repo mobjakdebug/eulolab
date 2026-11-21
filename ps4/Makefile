@@ -13,29 +13,20 @@ GP4 := $(SDK)/bin/linux/create-gp4
 OUT := $(ROOT)/out/ps4
 STAGE := $(OUT)/stage
 CONTENT_ID := IV0000-BREW00242_00-EULOROCKETLAB001
-SRC := core/rocket.cpp core/motor.cpp core/flight.cpp core/telemetry.cpp core/mesh.cpp core/bench_link.cpp ui/canvas.cpp ui/rocket_view.cpp ui/app.cpp ui/app_draw.cpp platform/ps4.cpp platform/ps4_bench_usb.cpp
+SRC := core/rocket.cpp core/motor.cpp core/flight.cpp core/telemetry.cpp core/mesh.cpp core/bench_profile.cpp core/bench_link.cpp ui/canvas.cpp ui/rocket_view.cpp ui/app.cpp ui/app_draw.cpp platform/ps4.cpp platform/ps4_bench_usb.cpp
 OBJ := $(addprefix $(OUT)/obj/,$(SRC:.cpp=.o))
-HEADERS := $(wildcard $(ROOT)/src/core/*.hpp $(ROOT)/src/ui/*.hpp) $(ROOT)/ps4/include/libusb.h
+HEADERS := $(wildcard $(ROOT)/src/core/*.hpp $(ROOT)/src/ui/*.hpp) $(ROOT)/src/platform/ps4_bench_usb.hpp $(ROOT)/ps4/include/libusb.h
 # The SDK's libc++ expects musl's BSD and XOPEN declarations (nanosleep and
 # vasprintf); gnu++17 retains the feature macros that its own samples use.
 FLAGS := --target=x86_64-pc-freebsd12-elf -std=gnu++17 \
   -O2 -fPIC -funwind-tables -isysroot $(SDK) -isystem $(SDK)/include \
   -isystem $(SDK)/include/c++/v1 -I$(ROOT)/ps4/include -I$(OUT) -I$(ROOT)/src
-# No default USB identity is assumed for an uninspected ESP32/STM32 board.
-BENCH_VID ?= 0
-BENCH_PID ?= 0
+# No USB VID/PID or pin profile is compiled into the eboot. The console app
+# edits a separate /data/eulolab/bench-profile.cfg; defaults open no device.
 LIBS := -lc -lkernel -lc++ -lSceVideoOut -lScePad -lSceUserService -lSceSysmodule -lSceUsbd
-.PHONY: eboot pkg clean FORCE
+.PHONY: eboot pkg clean
 
 eboot: $(OUT)/eboot.bin
-
-# Regenerate only if the board profile changed, so make re-links the eboot.
-$(OUT)/bench_config.hpp: FORCE
-	@mkdir -p $(dir $@)
-	@printf '#pragma once\n#define EULO_BENCH_VID (%s)\n#define EULO_BENCH_PID (%s)\n' '$(BENCH_VID)' '$(BENCH_PID)' > $@.tmp
-	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
-
-$(OUT)/obj/platform/ps4.o: $(OUT)/bench_config.hpp
 
 $(OUT)/obj/%.o: $(ROOT)/src/%.cpp $(HEADERS)
 	@mkdir -p $(dir $@)

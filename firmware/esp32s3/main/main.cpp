@@ -1,5 +1,8 @@
-// ESP-IDF ESP32-S3 reference target for EuloBench/1. NOT flight firmware.
+// ESP-IDF ESP32-S3 reference for EuloBench/2. NOT flight firmware.
+// The app may choose logical axis -> GPIO only within the PWM pool reviewed
+// when this firmware was built; the gate GPIO is NEVER remotely configurable.
 #include "core/bench_board.hpp"
+#include "core/bench_profile.hpp"
 #include "core/bench_wire.hpp"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -21,24 +24,32 @@
 #if CONFIG_EULO_BENCH_GATE_PIN < 0 || CONFIG_EULO_BENCH_SERVO0_PIN < 0 || \
     CONFIG_EULO_BENCH_SERVO1_PIN < 0 || CONFIG_EULO_BENCH_SERVO2_PIN < 0 || \
     CONFIG_EULO_BENCH_SERVO3_PIN < 0
-#error "Choose the actual board's gate and four PWM GPIOs in idf.py menuconfig."
+#error "Provision the actual board's gate and at least four safe PWM GPIOs."
 #endif
 #if CONFIG_TINYUSB_VENDOR_COUNT != 1
 #error "EuloBench requires exactly one vendor interface."
 #endif
 namespace {
-constexpr int pins[]={CONFIG_EULO_BENCH_SERVO0_PIN,CONFIG_EULO_BENCH_SERVO1_PIN,
-                      CONFIG_EULO_BENCH_SERVO2_PIN,CONFIG_EULO_BENCH_SERVO3_PIN};
+constexpr int allowedPins[]={CONFIG_EULO_BENCH_SERVO0_PIN,CONFIG_EULO_BENCH_SERVO1_PIN,
+    CONFIG_EULO_BENCH_SERVO2_PIN,CONFIG_EULO_BENCH_SERVO3_PIN,
+    CONFIG_EULO_BENCH_SPARE0_PIN,CONFIG_EULO_BENCH_SPARE1_PIN,
+    CONFIG_EULO_BENCH_SPARE2_PIN,CONFIG_EULO_BENCH_SPARE3_PIN};
 constexpr int gatePin=CONFIG_EULO_BENCH_GATE_PIN;
-static_assert(gatePin!=19 && gatePin!=20,"Gate cannot share the ESP32-S3 USB pins");
-static_assert(gatePin!=pins[0] && gatePin!=pins[1] && gatePin!=pins[2] &&
-              gatePin!=pins[3],"Gate GPIO cannot drive a servo");
-static_assert(pins[0]!=pins[1] && pins[0]!=pins[2] && pins[0]!=pins[3] &&
-              pins[1]!=pins[2] && pins[1]!=pins[3] && pins[2]!=pins[3],
-              "Servo GPIOs must be distinct");
-static_assert(pins[0]!=19 && pins[0]!=20 && pins[1]!=19 && pins[1]!=20 &&
-              pins[2]!=19 && pins[2]!=20 && pins[3]!=19 && pins[3]!=20,
-              "PWM GPIOs cannot share the native USB pins");
+constexpr bool safeWiring() {
+    if(gatePin==0 || gatePin==3 || gatePin==19 || gatePin==20 ||
+       gatePin==45 || gatePin==46 || gatePin>48)return false;
+    for(int i=0;i<8;++i) {
+        const int pin=allowedPins[i];
+        if(pin<0)continue;
+        // USB D+/D- and strapping pins must not be in the PWM pool. Review
+        // board-specific flash/PSRAM and supply pinouts before provisioning.
+        if(pin==0 || pin==3 || pin==19 || pin==20 ||
+           pin==45 || pin==46 || pin>48 || pin==gatePin)return false;
+        for(int j=0;j<i;++j)if(pin==allowedPins[j])return false;
+    }
+    return true;
+}
+static_assert(safeWiring(),"Unsafe or duplicate gate/PWM pin in board provision");
 constexpr uint8_t configBytes[]={
     TUD_CONFIG_DESCRIPTOR(1,1,0,32,0,250),
     9,TUSB_DESC_INTERFACE,0,0,2,TUSB_CLASS_VENDOR_SPECIFIC,0x45,0x55,0,
@@ -49,13 +60,22 @@ static_assert(sizeof(configBytes)==32,"USB configuration length mismatch");
 const tusb_desc_device_t deviceDesc={
     sizeof(tusb_desc_device_t),TUSB_DESC_DEVICE,0x0200,
     TUSB_CLASS_VENDOR_SPECIFIC,0x45,0x55,CFG_TUD_ENDPOINT0_SIZE,
-    CONFIG_EULO_BENCH_USB_VID,CONFIG_EULO_BENCH_USB_PID,0x0100,
+    CONFIG_EULO_BENCH_USB_VID,CONFIG_EULO_BENCH_USB_PID,0x0200,
     1,2,0,1
 };
 char language[]={0x09,0x04,0};
-const char* strings[]={language,"EuloLab bench reference","EuloBench/1"};
+const char* strings[]={language,"EuloLab bench reference","EuloBench/2"};
+
+eulo::bench::Capabilities makeCapabilities() {
+    eulo::bench::Capabilities caps;
+    caps.family=static_cast<uint8_t>(eulo::bench::Family::Esp32);
+    caps.gatePin=static_cast<uint8_t>(gatePin);
+    for(int i=0;i<8;++i)if(allowedPins[i]>=0)
+        caps.allowed[i]=static_cast<uint8_t>(allowedPins[i]);
+    return caps;
+}
 portMUX_TYPE boardMux=portMUX_INITIALIZER_UNLOCKED;
-eulo::bench::Board board;
+eulo::bench::Board board(makeCapabilities());
 eulo::bench::Decoder decoder;
 bool usbPresent=false;
 uint32_t milliseconds() {return static_cast<uint32_t>(esp_timer_get_time()/1000);}
@@ -77,8 +97,8 @@ uint32_t duty(int angleCdeg) {
     const int micros=1500+angleCdeg*1000/9000;
     return static_cast<uint32_t>(micros*16384/20000);
 }
-void setServo(int axis,int angleCdeg) {
-    const auto channel=static_cast<ledc_channel_t>(LEDC_CHANNEL_0+axis);
+void setOutput(int slot,int angleCdeg) {
+    const auto channel=static_cast<ledc_channel_t>(LEDC_CHANNEL_0+slot);
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE,channel,duty(angleCdeg)));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE,channel));
 }
@@ -96,9 +116,10 @@ void initOutputs() {
     timer.freq_hz=50;
     timer.clk_cfg=LEDC_AUTO_CLK;
     ESP_ERROR_CHECK(ledc_timer_config(&timer));
-    for(int i=0;i<4;++i) {
+    for(int i=0;i<8;++i) {
+        if(allowedPins[i]<0)continue;
         ledc_channel_config_t channel{};
-        channel.gpio_num=pins[i];
+        channel.gpio_num=allowedPins[i];
         channel.speed_mode=LEDC_LOW_SPEED_MODE;
         channel.channel=static_cast<ledc_channel_t>(LEDC_CHANNEL_0+i);
         channel.timer_sel=LEDC_TIMER_0;
@@ -109,8 +130,8 @@ void initOutputs() {
 }
 } // namespace
 
-// Vendor callbacks run in TinyUSB's task. The independent main task applies
-// PWM and neutralises on deadline, gate loss, detach or USB suspend.
+// Vendor callbacks run in TinyUSB's task. Only the independent main task
+// updates physical PWM; gate loss/detach/timeout produce neutral locally.
 extern "C" {
 #if CFG_TUD_API_V0_19_COMPAT
 void tud_vendor_rx_cb(uint8_t itf,const uint8_t*,uint16_t)
@@ -118,7 +139,7 @@ void tud_vendor_rx_cb(uint8_t itf,const uint8_t*,uint16_t)
 void tud_vendor_rx_cb(uint8_t itf,const uint8_t*,uint32_t)
 #endif
 {
-    if(itf!=0)return;
+    if(itf!=0 || !tud_mounted() || tud_suspended())return;
     uint8_t input[64];
     while(tud_vendor_available()) {
         const uint32_t count=tud_vendor_read(input,sizeof(input));
@@ -149,16 +170,17 @@ void app_main() {
     usb.descriptor.string_count=sizeof(strings)/sizeof(strings[0]);
     usb.descriptor.full_speed_config=configBytes;
     ESP_ERROR_CHECK(tinyusb_driver_install(&usb));
-    int applied[4]={};
+    int applied[8]={};
     for(;;) {
         const uint32_t now=milliseconds();
-        int requested[4];
+        int requested[8]={};
         portENTER_CRITICAL(&boardMux);
         board.tick(now,usbPresent,gateClosed());
-        for(int i=0;i<4;++i)requested[i]=board.angle(i);
+        for(int i=0;i<8;++i)if(allowedPins[i]>=0)
+            requested[i]=board.angleOnPin(static_cast<uint8_t>(allowedPins[i]));
         portEXIT_CRITICAL(&boardMux);
-        for(int i=0;i<4;++i)if(requested[i]!=applied[i]) {
-            setServo(i,requested[i]);applied[i]=requested[i];
+        for(int i=0;i<8;++i)if(allowedPins[i]>=0 && requested[i]!=applied[i]) {
+            setOutput(i,requested[i]);applied[i]=requested[i];
         }
         ESP_ERROR_CHECK(esp_task_wdt_reset());
         vTaskDelay(pdMS_TO_TICKS(10));

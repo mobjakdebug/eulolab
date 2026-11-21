@@ -16,7 +16,8 @@ enum class Action {
     SideView, TopView, IsoView, CycleView, LoadRecording, CalibrateRecording,
     ImportObj, ImportStl, ExportObj,
     Bench, BenchConnect, BenchDisconnect, BenchAxisPrev, BenchAxisNext,
-    BenchPulseMinus, BenchPulsePlus, BenchNeutral
+    BenchPulseMinus, BenchPulsePlus, BenchNeutral,
+    BenchSetup, BenchProfileSave, BenchApplyPins
 };
 
 class App {
@@ -51,6 +52,10 @@ public:
     void setUsbStatus(const std::string& text) { usbStatus_ = text; }
     void setBenchControl(BenchControl* bench);
     bool benchConfirmationOpen() const { return benchConfirm_; }
+    bool benchSetupOpen() const { return benchSetup_; }
+    bool benchProfileEditorOpen() const { return benchHexEditing_; }
+    const bench::Profile& benchProfile() const { return benchProfile_; }
+    bool setBenchProfileField(int index,unsigned value);
     void setRuntimeLabel(const std::string& text) { runtimeLabel_ = text; }
     void setTextEntryAvailable(bool enabled) { textEntryAvailable_ = enabled; }
 private:
@@ -75,8 +80,15 @@ private:
     int focusRegion_ = 3, toolbarFocus_ = 0;
     int menuIndex_ = 0, menuItem_ = 0, helpMode_ = 0;
     int benchAxis_ = 0, benchFocus_ = 0, benchAngleCdeg_ = 0;
-    int benchConfirmFocus_ = 0;
-    bool benchConfirm_ = false;
+    int benchConfirmFocus_ = 0, benchSetupSelected_ = 0, benchSetupFocus_ = 0;
+    int benchHexNibble_ = 0;
+    bool benchConfirm_ = false, benchConfirmPins_ = false;
+    bool benchSetup_ = false, benchHexEditing_ = false;
+    bool benchProfileSaved_ = false, benchProfileDirty_ = false;
+    std::string benchHexBuffer_;
+    bench::Profile benchProfile_;
+    bench::Capabilities lastBenchCapabilities_; // display-only, never authorises a command
+    bool benchCapabilitiesSeen_ = false;
     BenchControl* bench_ = nullptr;
     bool menuOpen_ = false, hasUndo_ = false, dirty_ = false, saved_ = false;
     bool confirmDiscard_ = false, skipDiscardOnce_ = false;
@@ -90,6 +102,7 @@ private:
     int demoStage_ = -1;
     std::string projectPath_;
     std::string recordingPath_;
+    std::string benchProfilePath_;
     std::string status_ = "Select a component and edit its dimensions.";
     std::string usbStatus_ = "USB not yet scanned";
     std::string runtimeLabel_ = "NATIVE WORKBENCH";
@@ -116,6 +129,11 @@ private:
     void drawHelp(Canvas& c) const;
     void drawDiscardConfirmation(Canvas& c) const;
     void drawBenchConfirmation(Canvas& c) const;
+    void drawBenchHexEditor(Canvas& c) const;
     void leaveBench();
+    void beginBenchHexEdit();
+    void commitBenchHexEdit();
+    void cancelBenchHexEdit();
+    void benchHexDigit(char ch);
 };
 } // namespace eulo

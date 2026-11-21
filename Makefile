@@ -1,6 +1,6 @@
 CXX ?= g++
 CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra -Wpedantic -Isrc
-CORE = src/core/rocket.cpp src/core/motor.cpp src/core/flight.cpp src/core/telemetry.cpp src/core/mesh.cpp src/core/bench_link.cpp
+CORE = src/core/rocket.cpp src/core/motor.cpp src/core/flight.cpp src/core/telemetry.cpp src/core/mesh.cpp src/core/bench_profile.cpp src/core/bench_link.cpp
 UI = src/ui/canvas.cpp src/ui/rocket_view.cpp src/ui/app.cpp src/ui/app_draw.cpp
 HEADERS = $(wildcard src/core/*.hpp src/ui/*.hpp)
 .PHONY: all test preview ps4 video clean
@@ -18,13 +18,17 @@ out/core-tests: $(CORE) $(HEADERS) tests/core_tests.cpp | out
 out/ui-tests: $(CORE) $(UI) $(HEADERS) tests/ui_tests.cpp assets/font-atlas.bin | out
 	$(CXX) $(CXXFLAGS) $(CORE) $(UI) tests/ui_tests.cpp -o $@
 
-out/bench-tests: src/core/bench_link.cpp src/core/bench_board.cpp src/core/bench_link.hpp src/core/bench_board.hpp src/core/bench_wire.hpp src/core/bench_usb_descriptors.hpp tests/bench_tests.cpp | out
-	$(CXX) $(CXXFLAGS) src/core/bench_link.cpp src/core/bench_board.cpp tests/bench_tests.cpp -o $@
+out/bench-tests: src/core/bench_link.cpp src/core/bench_board.cpp src/core/bench_profile.cpp $(wildcard src/core/bench_*.hpp) tests/bench_tests.cpp | out
+	$(CXX) $(CXXFLAGS) src/core/bench_link.cpp src/core/bench_board.cpp src/core/bench_profile.cpp tests/bench_tests.cpp -o $@
 
-test: out/eulolab-host out/core-tests out/ui-tests out/bench-tests
+out/stm32-port-tests: firmware/stm32/bench_port.cpp firmware/stm32/bench_port.hpp src/core/bench_board.cpp $(wildcard src/core/bench_*.hpp) tests/stm32_port_tests.cpp | out
+	$(CXX) $(CXXFLAGS) -I. firmware/stm32/bench_port.cpp src/core/bench_board.cpp tests/stm32_port_tests.cpp -o $@
+
+test: out/eulolab-host out/core-tests out/ui-tests out/bench-tests out/stm32-port-tests
 	./out/core-tests
 	./out/ui-tests
 	./out/bench-tests
+	./out/stm32-port-tests
 	python3 -m unittest discover -s tests -p '*_test.py'
 
 preview: out/eulolab-host

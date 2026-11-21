@@ -3,14 +3,27 @@
 #include <cstdint>
 
 namespace eulo::bench {
-// EuloBench/1 is a bench-only USB byte protocol; it has no arming, ignition,
+// EuloBench/2 is a bench-only USB byte protocol; it has no arming, ignition,
 // radio or in-flight command. See docs/bench-usb.md before wiring hardware.
 constexpr std::size_t maxPayload=16,maxFrame=7+maxPayload+2;
-constexpr uint8_t version=1;
+constexpr uint8_t version=2;
+constexpr uint8_t unsetPin=0xff;
 enum class Kind : uint8_t {
-    Hello=1, Pulse=2, Neutral=3,
-    Identity=0x81, Ack=0x82
+    Hello=1, Pulse=2, Neutral=3, Pins=4,
+    Identity=0x81, Ack=0x82, PinStatus=0x84
 };
+// The MCU advertises the only pins the app may assign to four servo axes.
+// Gate is a FIXED input provisioned in firmware, never remotely assignable.
+struct Capabilities {
+    uint8_t family=0,gatePin=unsetPin;
+    uint8_t allowed[8]={unsetPin,unsetPin,unsetPin,unsetPin,
+                        unsetPin,unsetPin,unsetPin,unsetPin};
+};
+inline bool allowedPin(const Capabilities& caps,uint8_t pin) {
+    if(pin==unsetPin || pin==caps.gatePin)return false;
+    for(uint8_t allowed:caps.allowed)if(allowed==pin)return true;
+    return false;
+}
 struct Frame {
     Kind kind=Kind::Hello;
     uint16_t sequence=0;

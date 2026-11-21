@@ -33,7 +33,7 @@ static void testBenchWire() {
     uint8_t bytes[maxFrame]={};
     const size_t length=encode(request,bytes);
     assert(length==14 && bytes[0]=='E' && bytes[1]=='U' &&
-           bytes[2]==1 && read16(bytes+4)==1234);
+           bytes[2]==version && read16(bytes+4)==1234);
     Decoder decoder;
     Frame received;
     assert(!decoder.push(0x55,received));

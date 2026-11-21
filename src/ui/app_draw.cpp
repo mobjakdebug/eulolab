@@ -19,6 +19,10 @@ std::string formatted(double v,int precision,const char* unit="") {
         unit[0]?" ":"",unit);
     return buffer;
 }
+std::string hexValue(unsigned value,int width) {
+    char buffer[8];std::snprintf(buffer,sizeof(buffer),"%0*X",width,value);
+    return buffer;
+}
 void rightText(Canvas& c,int right,int y,const std::string& text,uint32_t color) {
     c.text(right-c.textWidth(text),y,text,color);
 }
@@ -98,8 +102,9 @@ void App::drawTree(Canvas& c) const {
     c.rect(0,contentY,treeW,statusY-contentY,surface);
     c.rect(treeW-1,contentY,1,statusY-contentY,rule);
     if(page_==Page::Bench) {
-        c.text(16,111,"USB bench",ink,1);
-        c.text(17,145,"One timed pulse / USB",muted);
+        c.text(16,111,benchSetup_?"USB profile":"USB bench",ink,1);
+        c.text(17,145,benchSetup_?"Local hardware profile":
+                                  "One timed pulse / USB",muted);
         c.rect(16,168,212,1,rule);
         c.text(17,185,"Transport",ink);
         c.text(17,222,bench_ && bench_->connected()?"Board identified":
@@ -108,12 +113,17 @@ void App::drawTree(Canvas& c) const {
             bench_->physicalGate()?"Gate at handshake: enabled":
                                    "Gate at handshake: open":"Gate: not checked",muted,0,211);
         c.rect(16,305,212,1,rule);
-        c.text(17,319,"Configured hardware",ink);
-        c.text(17,355,usbStatus_,muted,0,211);
+        c.text(17,319,benchSetup_?"Chosen profile":"Configured hardware",ink);
+        c.text(17,354,benchSetup_?std::string(bench::familyName(benchProfile_.family)):
+                                usbStatus_,muted,0,211);
+        if(benchSetup_)c.text(17,385,hexValue(benchProfile_.vendor,4)+":"+
+                                      hexValue(benchProfile_.product,4),ink);
         c.rect(16,416,212,1,rule);
         c.text(17,430,"Separated from flight",ink);
-        c.text(17,469,"No model-driven output",muted);
-        c.text(17,504,"No live gyro / altitude",muted);
+        c.text(17,469,benchSetup_?"Gate fixed on board":
+                                    "No model-driven output",muted,0,211);
+        c.text(17,504,benchSetup_?"Approved pins only":
+                                    "No live gyro / altitude",muted,0,211);
         c.text(17,645,"Bench only / no radio",muted);
         return;
     }
@@ -183,8 +193,35 @@ void App::drawInspector(Canvas& c) const {
     c.rect(inspectorX,contentY,1,statusY-contentY,rule);
     c.text(inspectorX+16,111,page_==Page::Garage?"Properties":
         page_==Page::Flight?"Flight analysis":
-        page_==Page::Bench?"Manual actuators":"Recorded sensors",ink,1);
+        page_==Page::Bench?(benchSetup_?"USB and pin setup":"Manual actuators"):
+                            "Recorded sensors",ink,1);
     if(page_==Page::Bench) {
+        if(benchSetup_) {
+            c.text(inspectorX+16,148,benchProfileDirty_?"Local edits / not saved":
+                benchProfileSaved_?"Saved profile / no auto-connect":
+                                    "No profile / USB disabled",muted,0,285);
+            c.rect(inspectorX+16,171,288,1,rule);
+            const char* names[]={"Board family","USB VID","USB PID","Interface",
+                "Bulk OUT","Bulk IN","Pitch pin","Yaw pin","Fin A pin","Fin B pin"};
+            std::string values[10];
+            values[0]=bench::familyName(benchProfile_.family);
+            values[1]=hexValue(benchProfile_.vendor,4);
+            values[2]=hexValue(benchProfile_.product,4);
+            values[3]=hexValue(benchProfile_.interfaceNumber,2);
+            values[4]=benchProfile_.bulkOut?hexValue(benchProfile_.bulkOut,2):"00 / auto";
+            values[5]=benchProfile_.bulkIn?hexValue(benchProfile_.bulkIn,2):"00 / auto";
+            for(int i=0;i<4;++i)values[6+i]=
+                bench::pinName(benchProfile_.family,benchProfile_.pins[i]);
+            for(int i=0;i<10;++i)compactRow(c,inspectorX+6,178+i*38,305,
+                names[i],values[i],focusRegion_==3 && i==benchSetupSelected_);
+            sectionButton(c,976,585,288,"Save profile locally",
+                focusRegion_==5 && benchSetupFocus_==2,
+                hoverX_>=976 && hoverX_<1264 && hoverY_>=585 && hoverY_<618);
+            sectionButton(c,976,635,288,"Back to manual controls",
+                focusRegion_==5 && benchSetupFocus_==3,
+                hoverX_>=976 && hoverX_<1264 && hoverY_>=635 && hoverY_<668);
+            return;
+        }
         constexpr const char* axisNames[]={"TVC pitch","TVC yaw","Fin A","Fin B"};
         c.text(inspectorX+16,148,"USB / board-local watchdog",muted);
         c.rect(inspectorX+16,171,288,1,rule);
@@ -193,6 +230,9 @@ void App::drawInspector(Canvas& c) const {
         compactRow(c,inspectorX+6,257,305,"Interlock",bench_ && bench_->connected()?
             bench_->physicalGate()?"At handshake: on":"At handshake: off":
                                    "Not checked");
+        c.text(976,294,bench_ && bench_->connected()?
+            bench_->pinsMatched()?"Axis pins match saved profile":"Axis pins not yet verified":
+                                  "Axis pins: not checked",muted,0,286);
         const auto button=[&](int index,int x,int y,int w,const char* label) {
             sectionButton(c,x,y,w,label,focusRegion_==5 && benchFocus_==index,
                 hoverX_>=x && hoverX_<x+w && hoverY_>=y && hoverY_<y+33);
@@ -204,8 +244,8 @@ void App::drawInspector(Canvas& c) const {
         button(4,976,470,140,"Pulse -2 deg");
         button(5,1124,470,140,"Pulse +2 deg");
         button(6,976,530,288,"Request neutral");
-        c.text(976,584,"No link to flight controls.",muted);
-        c.text(976,618,"Independent power cut required.",muted);
+        button(7,976,584,288,"Configure USB and pin map");
+        c.text(976,637,"Independent power cut required.",muted);
         return;
     }
     if(page_==Page::Garage) {
@@ -346,11 +386,21 @@ void App::drawAnalysis(Canvas& c) const {
     c.rect(viewX,analysisY,viewW,analysisH,surface);
     c.rect(viewX,analysisY,viewW,1,rule);
     if(page_==Page::Bench) {
-        c.text(viewX+16,analysisY+7,"Bench protocol",ink);
-        c.text(viewX+16,analysisY+40,"One bounded command / matching ACK / no retries.",muted);
-        c.text(viewX+16,analysisY+75,
-               "No live sensor stream. ACK is not position feedback.",muted);
-        c.text(viewX+16,analysisY+101,"Square / N: request neutral",muted);
+        c.text(viewX+16,analysisY+7,benchSetup_?"Hardware setup":
+                                              "Bench protocol",ink);
+        if(benchSetup_) {
+            c.text(viewX+16,analysisY+34,
+                "App selects only firmware-provisioned PWM pins; GPIO gate stays fixed.",muted,0,682);
+            c.text(viewX+16,analysisY+63,
+                "No automatic discovery of unknown firmware or arbitrary chip GPIOs.",muted,0,682);
+            c.text(viewX+16,analysisY+92,
+                "Host preview has no USB bridge; console USB unverified.",muted);
+        } else {
+            c.text(viewX+16,analysisY+34,"One bounded command / matching ACK / no retries.",muted);
+            c.text(viewX+16,analysisY+63,
+                   "No live sensor stream. ACK is not position feedback.",muted);
+            c.text(viewX+16,analysisY+92,"Square / N: request neutral",muted);
+        }
         return;
     }
     if(page_==Page::Ground) {
@@ -505,6 +555,8 @@ void App::drawHelp(Canvas& c) const {
     const int count=helpMode_==1?9:8;
     for(int i=0;i<count;++i) {
         const char* line=helpMode_==1?controls[i]:limits[i];
+        if(helpMode_==1 && page_==Page::Bench && i==8)
+            line="Bench setup: X edits hex; D-pad picks digit/value; O cancels.";
         const bool header=(i==0 || (helpMode_==1 && i==5));
         c.text(321,236+i*32,line,header?accent:ink,0,578);
     }
@@ -541,17 +593,52 @@ void App::drawBenchConfirmation(Canvas& c) const {
     c.rect(330,214,620,266,surface);
     c.border(330,214,620,266,rule,2);
     c.rect(330,214,620,5,accent);
-    c.text(355,240,"Confirm one physical pulse",ink,1);
-    constexpr const char* names[]={"TVC pitch","TVC yaw","Fin A","Fin B"};
-    const std::string command=std::string(names[benchAxis_])+": "+
-        (benchAngleCdeg_>0?"+2":"-2")+" deg for 150 ms";
-    c.text(355,303,command,ink);
-    c.text(355,337,"No motor or propellant. Restrain the rig; use a power cut-off.",muted,0,565);
-    c.text(355,369,"The board must return to neutral on timeout or gate loss.",muted,0,565);
+    c.text(355,240,benchConfirmPins_?"Confirm board pin mapping":
+                                    "Confirm one physical pulse",ink,1);
+    if(benchConfirmPins_) {
+        c.text(355,303,"Pitch "+bench::pinName(benchProfile_.family,benchProfile_.pins[0])+
+            "  /  Yaw "+bench::pinName(benchProfile_.family,benchProfile_.pins[1]),ink,0,565);
+        c.text(355,337,"Fin A "+bench::pinName(benchProfile_.family,benchProfile_.pins[2])+
+            "  /  Fin B "+bench::pinName(benchProfile_.family,benchProfile_.pins[3]),ink,0,565);
+        c.text(355,369,"Gate OPEN. Board approves only provisioned pins. No pulse.",muted,0,565);
+    } else {
+        constexpr const char* names[]={"TVC pitch","TVC yaw","Fin A","Fin B"};
+        const std::string command=std::string(names[benchAxis_])+": "+
+            (benchAngleCdeg_>0?"+2":"-2")+" deg for 150 ms";
+        c.text(355,303,command,ink);
+        c.text(355,337,"No motor or propellant. Restrain the rig; use a power cut-off.",muted,0,565);
+        c.text(355,369,"The board must return to neutral on timeout or gate loss.",muted,0,565);
+    }
     c.rect(355,402,565,1,rule);
     sectionButton(c,354,420,148,"Cancel",benchConfirmFocus_==0);
     sectionButton(c,512,420,180,"Neutral now",benchConfirmFocus_==1);
-    sectionButton(c,702,420,222,"Send one pulse",benchConfirmFocus_==2);
+    sectionButton(c,702,420,222,benchConfirmPins_?"Apply pin map":"Send one pulse",
+                  benchConfirmFocus_==2);
+}
+
+void App::drawBenchHexEditor(Canvas& c) const {
+    if(!benchHexEditing_)return;
+    c.rect(0,0,1280,720,rgb(226,232,232));
+    c.rect(338,221,620,266,rgb(195,207,211));
+    c.rect(330,214,620,266,surface);
+    c.border(330,214,620,266,rule,2);
+    c.rect(330,214,620,5,accent);
+    c.text(355,240,"Edit local bench profile / hex",ink,1);
+    const char* names[]={"Board family","USB VID","USB PID","Interface",
+        "Bulk OUT","Bulk IN","Pitch pin","Yaw pin","Fin A pin","Fin B pin"};
+    c.text(355,281,names[benchSetupSelected_],muted);
+    for(std::size_t i=0;i<benchHexBuffer_.size();++i) {
+        const int x=480+static_cast<int>(i)*70;
+        const bool selected=static_cast<int>(i)==benchHexNibble_;
+        c.rect(x,303,57,57,selected?accentPale:white);
+        c.border(x,303,57,57,selected?accent:rule,selected?2:1);
+        const std::string digit(1,benchHexBuffer_[i]);
+        c.text(x+19,316,digit,selected?accent:ink,1);
+    }
+    c.text(355,372,"D-pad: choose digit / change hex. Enter or X uses value.",muted,0,565);
+    c.rect(355,402,565,1,rule);
+    sectionButton(c,354,420,158,"Cancel",false);
+    sectionButton(c,702,420,222,"Use hex value",false);
 }
 
 void App::draw(Canvas& c,double /*now*/) const {
@@ -561,27 +648,75 @@ void App::draw(Canvas& c,double /*now*/) const {
         c.rect(viewX,viewY,viewW,viewH,rgb(235,240,241));
         c.rect(viewX,viewY,viewW,39,surface);
         c.rect(viewX,viewY+38,viewW,1,rule);
-        c.text(viewX+17,viewY+8,"SERVO BENCH  /  MANUAL USB ONLY",ink);
-        c.text(viewX+17,viewY+57,bench_ && bench_->connected()?
-            bench_->physicalGate()?"Board identified. Gate reported enabled at handshake.":
-                                    "Board identified. Physical enable gate open.":
-            "Disconnected. No actuator commands are sent.",ink,0,670);
-        c.text(viewX+17,viewY+89,"COMMAND CHANNEL / NOT MEASURED SERVO POSITION",muted);
-        constexpr const char* labels[]={"TVC pitch","TVC yaw","Fin A","Fin B"};
-        for(int i=0;i<4;++i) {
-            const int y=viewY+132+i*63;
-            if(i==benchAxis_) {
-                c.rect(viewX+14,y-6,viewW-28,52,accentPale);
-                c.rect(viewX+14,y-6,4,52,accent);
-            } else c.rect(viewX+14,y-6,viewW-28,52,surface);
-            c.text(viewX+36,y+4,labels[i],i==benchAxis_?ink:muted);
-            c.line(viewX+280,y+17,viewX+626,y+17,rule,2);
-            c.line(viewX+453,y+7,viewX+453,y+26,i==benchAxis_?accent:muted,2);
-            c.text(viewX+275,y+24,"-2 deg",muted);
-            c.text(viewX+599,y+24,"+2 deg",muted);
+        if(benchSetup_) {
+            c.text(viewX+17,viewY+8,"USB PROFILE  /  EULOBENCH/2 DEVICES ONLY",ink,0,678);
+            c.text(viewX+17,viewY+56,"Select your board's own VID:PID and verified vendor bulk interface.",ink,0,676);
+            c.text(viewX+17,viewY+88,"00 endpoints = detect from descriptor; other values must match exactly.",muted,0,676);
+            c.rect(viewX+17,viewY+123,viewW-34,1,rule);
+            c.text(viewX+17,viewY+137,bench_ && bench_->connected()?
+                "BOARD-APPROVED PWM GPIO POOL  /  READ ONLY":
+                benchCapabilitiesSeen_?"LAST IDENTIFIED PIN POOL  /  RE-IDENTIFY TO APPLY":
+                                       "BOARD-APPROVED PWM GPIO POOL  /  READ ONLY",muted);
+            if((bench_ && bench_->connected()) || benchCapabilitiesSeen_) {
+                const auto caps=bench_ && bench_->connected()?
+                    bench_->capabilities():lastBenchCapabilities_;
+                std::string allowed[2];
+                for(int i=0;i<8;++i)if(caps.allowed[i]!=bench::unsetPin) {
+                    std::string& row=allowed[i/4];
+                    if(!row.empty())row+="   /   ";
+                    row+=bench::pinName(static_cast<bench::Family>(caps.family),
+                                        caps.allowed[i]);
+                }
+                c.text(viewX+17,viewY+163,allowed[0],ink,0,678);
+                if(!allowed[1].empty())c.text(viewX+17,viewY+186,allowed[1],ink,0,678);
+                c.text(viewX+17,viewY+212,
+                    std::string(bench_ && bench_->connected()?"Fixed gate input: ":
+                                                        "Last reported gate input: ")+
+                    bench::pinName(static_cast<bench::Family>(caps.family),caps.gatePin),muted);
+            } else {
+                c.text(viewX+17,viewY+169,"Identify a board to inspect its allowed GPIOs.",ink);
+                c.text(viewX+17,viewY+212,"The gate input cannot be remapped over USB.",muted);
+            }
+            c.rect(viewX+17,viewY+241,viewW-34,1,rule);
+            c.text(viewX+17,viewY+256,"REQUESTED LOGICAL CHANNELS  /  NO HARDWARE CHANGE YET",muted,0,678);
+            const std::string pitch=bench::pinName(benchProfile_.family,benchProfile_.pins[0]);
+            const std::string yaw=bench::pinName(benchProfile_.family,benchProfile_.pins[1]);
+            const std::string a=bench::pinName(benchProfile_.family,benchProfile_.pins[2]);
+            const std::string b=bench::pinName(benchProfile_.family,benchProfile_.pins[3]);
+            c.text(viewX+17,viewY+282,"Pitch: "+pitch+"     Yaw: "+yaw,ink,0,674);
+            c.text(viewX+17,viewY+313,"Fin A: "+a+"     Fin B: "+b,ink,0,674);
+            c.text(viewX+17,viewY+345,"Save USB IDs, identify, edit pins, save, re-identify, apply.",muted,0,675);
+            sectionButton(c,270,486,300,"Identify / read GPIO pool",
+                focusRegion_==5 && benchSetupFocus_==0,
+                hoverX_>=270 && hoverX_<570 && hoverY_>=486 && hoverY_<519);
+            sectionButton(c,580,486,354,"Apply pin map (gate OPEN)",
+                focusRegion_==5 && benchSetupFocus_==1,
+                hoverX_>=580 && hoverX_<934 && hoverY_>=486 && hoverY_<519);
+            c.text(viewX+17,viewY+421,"No servo power from USB. Use an independent physical cut-off.",muted,0,675);
+            c.border(viewX,viewY,viewW,viewH,rule);
+        } else {
+            c.text(viewX+17,viewY+8,"SERVO BENCH  /  MANUAL USB ONLY",ink);
+            c.text(viewX+17,viewY+57,bench_ && bench_->connected()?
+                bench_->physicalGate()?"Board identified. Gate reported enabled at handshake.":
+                                        "Board identified. Physical enable gate open.":
+                "Disconnected. No actuator commands are sent.",ink,0,670);
+            c.text(viewX+17,viewY+89,"COMMAND CHANNEL / NOT MEASURED SERVO POSITION",muted);
+            constexpr const char* labels[]={"TVC pitch","TVC yaw","Fin A","Fin B"};
+            for(int i=0;i<4;++i) {
+                const int y=viewY+132+i*63;
+                if(i==benchAxis_) {
+                    c.rect(viewX+14,y-6,viewW-28,52,accentPale);
+                    c.rect(viewX+14,y-6,4,52,accent);
+                } else c.rect(viewX+14,y-6,viewW-28,52,surface);
+                c.text(viewX+36,y+4,labels[i],i==benchAxis_?ink:muted);
+                c.line(viewX+280,y+17,viewX+626,y+17,rule,2);
+                c.line(viewX+453,y+7,viewX+453,y+26,i==benchAxis_?accent:muted,2);
+                c.text(viewX+275,y+24,"-2 deg",muted);
+                c.text(viewX+599,y+24,"+2 deg",muted);
+            }
+            c.text(viewX+17,viewY+403,"ACK confirms receipt, not measured travel. No flight link.",muted,0,676);
+            c.border(viewX,viewY,viewW,viewH,rule);
         }
-        c.text(viewX+17,viewY+403,"ACK confirms receipt, not measured travel. No flight link.",muted,0,676);
-        c.border(viewX,viewY,viewW,viewH,rule);
     } else if(page_==Page::Ground) {
         if(recording_.samples.empty()) {
             c.rect(viewX,viewY,viewW,viewH,rgb(235,240,241));
@@ -630,5 +765,6 @@ void App::draw(Canvas& c,double /*now*/) const {
     drawHelp(c);
     drawDiscardConfirmation(c);
     drawBenchConfirmation(c);
+    drawBenchHexEditor(c);
 }
 } // namespace eulo

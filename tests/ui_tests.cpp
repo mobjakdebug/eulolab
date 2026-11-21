@@ -424,14 +424,22 @@ void testStation() {
     std::puts("PASS station: recorded CSV, calibration, scrub/playback, relative pose and rejected file");
 }
 struct FakeBench final : BenchControl {
-    bool active=false,gate=true;
-    int connects=0,closes=0,pulses=0,neutrals=0,axis=-1,angle=0;
+    const bench::Profile* profile=nullptr;
+    std::array<uint8_t,4> assigned{{0xff,0xff,0xff,0xff}};
+    bool active=false,gate=false,mapped=false;
+    int connects=0,closes=0,pulses=0,neutrals=0,axis=-1,angle=0,pinMaps=0;
     bool connect(std::string& error) override {
         ++connects;active=true;error.clear();return true;
     }
+    bool applyPins(std::string& error) override {
+        assert(active && !gate && profile);
+        const auto caps=capabilities();
+        for(uint8_t pin:profile->pins)assert(bench::allowedPin(caps,pin));
+        assigned=profile->pins;mapped=true;++pinMaps;error.clear();return true;
+    }
     bool pulse(uint8_t channel,int cdeg,uint16_t duration,
                std::string& error) override {
-        assert(active && gate && duration==150 &&
+        assert(active && gate && pinsMatched() && duration==150 &&
                bench::safePulse(channel,cdeg,duration));
         ++pulses;axis=channel;angle=cdeg;error.clear();return true;
     }
@@ -441,10 +449,20 @@ struct FakeBench final : BenchControl {
     void close() override {if(active){++closes;++neutrals;}active=false;}
     bool connected() const override {return active;}
     bool physicalGate() const override {return gate;}
+    bool pinsMatched() const override {return mapped && profile && assigned==profile->pins;}
+    bench::Capabilities capabilities() const override {
+        bench::Capabilities caps;caps.family=1;caps.gatePin=8;
+        const uint8_t allowed[]={4,5,6,7,9,10,11,12};
+        for(int i=0;i<8;++i)caps.allowed[i]=allowed[i];
+        return caps;
+    }
 };
 void testBenchUI() {
+    std::filesystem::create_directories("out/bench-ui");
+    const char* path="out/bench-ui/bench-profile.cfg";
+    std::remove(path);
     App app;
-    assert(app.init("assets/font-atlas.bin","assets/motors","out/bench-ui.eul"));
+    assert(app.init("assets/font-atlas.bin","assets/motors","out/bench-ui/project.eul"));
     auto frame=pixels();Canvas canvas(frame.data()+1,w,h,app.font());
     render(app,canvas,frame);
     const Frame design=frame;
@@ -456,22 +474,72 @@ void testBenchUI() {
     assert(!app.benchConfirmationOpen());
     app.click(1080,330);
     assert(app.status().find("No Orbis bench")!=std::string::npos);
-    FakeBench fake;
+    FakeBench fake;fake.profile=&app.benchProfile();
     app.setBenchControl(&fake);
     app.click(1080,330);
-    assert(fake.connects==1 && fake.pulses==0);
+    assert(fake.connects==0 && app.status().find("Save a valid")!=std::string::npos);
+    app.click(1080,595); // real inspector setup button
+    assert(app.benchSetupOpen());
+    render(app,canvas,frame);assert(frame!=design);
+    app.click(1100,185); // family: protocol device -> ESP32
+    assert(app.benchProfile().family==bench::Family::Esp32);
+    app.click(1120,223); // USB VID hex field
+    assert(app.benchProfileEditorOpen());
+    for(int i=0;i<4;++i)app.key("f");
+    app.key("Enter");
+    assert(!app.benchProfileEditorOpen() && app.benchProfile().vendor==0xffff);
+    app.click(1010,178+6*38+5); // select pitch pin with pointer
+    app.action(Action::Confirm); // controller X opens on-screen hex editor
+    assert(app.benchProfileEditorOpen());
+    app.key("ArrowUp");app.key("Escape");
+    assert(!app.benchProfileEditorOpen() && app.benchProfile().pins[0]==0xff);
+    assert(app.setBenchProfileField(2,0xffff)); // reserved test-only ID
+    assert(!app.setBenchProfileField(4,0x81)); // OUT cannot be an IN address
+    app.click(1080,601); // draft: only USB ID, no guessed board pins
+    assert(app.status().find("saved locally")!=std::string::npos && fake.pinMaps==0);
+    app.click(300,500); // identify/read board-approved GPIOs before choosing pins
+    assert(fake.connects==1 && fake.pinMaps==0);
+    app.click(700,500); // cannot apply an incomplete draft
+    assert(!app.benchConfirmationOpen() &&
+           app.status().find("Set four")!=std::string::npos);
+    app.click(1010,178+6*38+5); // select pitch after reading allowed pool
+    app.action(Action::Confirm); // controller-only hex entry for GPIO4
+    app.key("ArrowUp"); // F -> 0 in the high nibble
+    app.key("ArrowRight");
+    for(int i=0;i<5;++i)app.key("ArrowUp"); // F -> 4 in the low nibble
+    app.action(Action::Confirm);
+    assert(!app.benchProfileEditorOpen() && app.benchProfile().pins[0]==4);
+    for(int i=1;i<4;++i)assert(app.setBenchProfileField(6+i,4+i));
+    assert(!fake.connected()); // local edits close the discovery session
+    app.click(1080,601); // save four selected GPIOs; no USB command yet
+    bench::Profile persisted;
+    std::string error;
+    assert(bench::loadProfile(persisted,path,error) && persisted.pins==app.benchProfile().pins);
+    app.click(300,500); // re-identify with gate OPEN
+    assert(fake.connects==2 && fake.pinMaps==0);
+    app.click(700,500); // apply mapping opens default-Cancel modal
+    assert(app.benchConfirmationOpen());
+    const Frame beforeModal=frame;
+    render(app,canvas,frame);assert(frame!=beforeModal);
+    app.key("Enter"); // default cancel, no assignment
+    assert(!app.benchConfirmationOpen() && fake.pinMaps==0);
+    app.click(700,500);app.click(745,434); // explicit Apply pin map
+    assert(!app.benchConfirmationOpen() && fake.pinMaps==1 && fake.pulses==0);
+    fake.gate=true;
+    app.action(Action::BenchSetup); // back to control closes stale gate handshake
+    assert(!app.benchSetupOpen() && !fake.connected());
+    app.click(1080,330);
+    assert(fake.connects==3 && fake.pinsMatched());
     app.action(Action::Undo);
     assert(app.status().find("isolated bench")!=std::string::npos && fake.pulses==0);
-    app.click(1150,480); // +2 deg opens a modal, not a servo command
+    app.click(1150,480); // +2 deg opens modal, not a servo command
     assert(app.benchConfirmationOpen() && fake.pulses==0);
-    const Frame beforeModal=frame;
-    render(app,canvas,frame);
-    assert(frame!=beforeModal);
-    app.key("Enter"); // Cancel is the default
+    app.key("Enter");
     assert(!app.benchConfirmationOpen() && fake.pulses==0);
     app.click(1150,480);
-    app.key("ArrowRight");app.key("Enter"); // neutral works even over the modal
-    assert(!app.benchConfirmationOpen() && fake.neutrals==1 && fake.pulses==0);
+    const int beforeNeutral=fake.neutrals;
+    app.key("ArrowRight");app.key("Enter"); // neutral even over modal
+    assert(!app.benchConfirmationOpen() && fake.neutrals==beforeNeutral+1);
     app.click(1150,480);
     app.key("ArrowRight");app.key("ArrowRight");app.key("Enter");
     assert(!app.benchConfirmationOpen() && fake.pulses==1 &&
@@ -482,20 +550,33 @@ void testBenchUI() {
     app.click(745,434); // explicit send confirmation
     assert(!app.benchConfirmationOpen() && fake.pulses==2 &&
            fake.axis==3 && fake.angle==-200);
-    app.key("n"); // host shortcut requests neutral, never a model change
-    assert(fake.neutrals==2);
+    app.key("n"); // emergency neutral, never a model edit
     app.action(Action::BenchPulsePlus);
     assert(app.benchConfirmationOpen());
-    app.action(Action::BenchDisconnect); // must override the modal immediately
-    assert(!app.benchConfirmationOpen() && fake.closes==1 && fake.pulses==2);
-    app.action(Action::BenchConnect);fake.gate=false;
+    app.action(Action::BenchDisconnect); // overrides modal immediately
+    assert(!app.benchConfirmationOpen() && !fake.connected() && fake.pulses==2);
+    app.action(Action::BenchConnect);
+    assert(fake.connected());
+    assert(app.setBenchProfileField(6,9)); // any edit closes the active USB link
+    assert(!fake.connected());
+    app.action(Action::BenchConnect);
+    assert(!fake.connected() && app.status().find("Save a valid")!=std::string::npos);
+    app.action(Action::BenchSetup);
+    app.action(Action::BenchProfileSave);
+    app.action(Action::BenchSetup);
+    app.action(Action::BenchConnect); // old mapping cannot pulse under new profile
+    assert(fake.connected() && !fake.pinsMatched());
     app.action(Action::BenchPulsePlus);
     assert(!app.benchConfirmationOpen() && fake.pulses==2);
     app.action(Action::Garage);
-    assert(fake.closes==2 && !fake.connected());
+    assert(!fake.connected());
     app.action(Action::BenchPulsePlus); // never actuate from flight/design
     assert(fake.pulses==2);
-    std::puts("PASS bench UI: opt-in, physical gate, modal default cancel, ACK path, emergency neutral and exit");
+    App reloaded;
+    assert(reloaded.init("assets/font-atlas.bin","assets/motors","out/bench-ui/project.eul") &&
+           reloaded.benchProfile().vendor==0xffff && reloaded.benchProfile().pins[0]==9);
+    std::remove(path);
+    std::puts("PASS bench UI: editable persisted profile, gate-open pin apply, default Cancel, pulses and neutral");
 }
 void testReplay() {
     App app;

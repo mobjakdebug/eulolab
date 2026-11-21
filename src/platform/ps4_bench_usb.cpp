@@ -13,10 +13,7 @@ void usbError(std::string& error,const char* operation,int code) {
 }
 bool OrbisBenchUsb::open(std::string& error) {
     close();
-    if(!configured()) {
-        error="Bench USB disabled: configure the board's VID and PID at build time.";
-        return false;
-    }
+    if(!profile_.validTransport(error))return false;
     libusb_device** list=nullptr;
     const int count=sceUsbdGetDeviceList(&list);
     if(count<0) {
@@ -28,10 +25,11 @@ bool OrbisBenchUsb::open(std::string& error) {
     for(int i=0;list && i<count;++i) {
         libusb_device_descriptor desc{};
         if(sceUsbdGetDeviceDescriptor(list[i],&desc)==0 &&
-           desc.idVendor==vendor_ && desc.idProduct==product_) {
+           desc.idVendor==profile_.vendor && desc.idProduct==profile_.product) {
             // Do not open a composite device or silently select one of two boards.
             if(desc.bNumConfigurations!=1 ||
-               (desc.bDeviceClass!=0 && desc.bDeviceClass!=0xff)) {
+               (desc.bDeviceClass!=0 && desc.bDeviceClass!=0xff &&
+                desc.bDeviceClass!=0xef)) {
                 error="Matching USB ID is not a single-config vendor board.";
                 if(list)sceUsbdFreeDeviceList(list);
                 return false;
@@ -58,7 +56,9 @@ bool OrbisBenchUsb::open(std::string& error) {
     bench::BulkEndpoints endpoints;
     int configuration=0;
     if(got<9 || got>static_cast<int>(sizeof(raw)) ||
-       !bench::findBenchInterface(raw,static_cast<std::size_t>(got),endpoints) ||
+       !bench::findBenchInterface(raw,static_cast<std::size_t>(got),endpoints,
+                                  profile_.interfaceNumber,profile_.bulkOut,
+                                  profile_.bulkIn) ||
        sceUsbdGetConfiguration(device_,&configuration)<0 ||
        configuration!=endpoints.configuration) {
         error="Bench USB configuration lacks the required single vendor interface and bulk IN/OUT.";

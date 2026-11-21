@@ -37,4 +37,23 @@ menu "EuloBench USB / bench-only servo wiring"
         int "PWM signal GPIO, fin B"
         range -1 48
         default -1
+
+    # These optional outputs are firmware-provisioned and start at neutral.
+    # The app may remap four logical channels only within this reviewed pool.
+    config EULO_BENCH_SPARE0_PIN
+        int "Optional allowed PWM GPIO 5 (-1 to disable)"
+        range -1 48
+        default -1
+    config EULO_BENCH_SPARE1_PIN
+        int "Optional allowed PWM GPIO 6 (-1 to disable)"
+        range -1 48
+        default -1
+    config EULO_BENCH_SPARE2_PIN
+        int "Optional allowed PWM GPIO 7 (-1 to disable)"
+        range -1 48
+        default -1
+    config EULO_BENCH_SPARE3_PIN
+        int "Optional allowed PWM GPIO 8 (-1 to disable)"
+        range -1 48
+        default -1
 endmenu

@@ -3,7 +3,6 @@
 // API contract; no Linux, browser, SDL or network service runs on the PS4.
 #include "ui/app.hpp"
 #include "ps4_bench_usb.hpp"
-#include "bench_config.hpp"
 #include <orbis/libkernel.h>
 #include <orbis/VideoOut.h>
 #include <orbis/Pad.h>
@@ -119,12 +118,15 @@ void control(eulo::App& app,uint32_t pressed) {
 } // namespace
 
 int main() {
-    eulo::OrbisBenchUsb usb(EULO_BENCH_VID,EULO_BENCH_PID);
-    // Nonce detects stale/cross-session replies; it is not authentication.
-    eulo::BenchLink benchLink(usb,static_cast<uint32_t>(sceKernelGetProcessTime()));
     eulo::App app;
     if(!app.init("/app0/assets/font-atlas.bin","/app0/assets/motors",
                  "/data/eulolab/project.eul"))return 1;
+    // The app owns a separately saved, user-edited hardware profile. No USB
+    // identity or pin mapping is compiled into the PS4 binary.
+    eulo::OrbisBenchUsb usb(app.benchProfile());
+    // Nonce detects stale/cross-session replies; it is not authentication.
+    eulo::BenchLink benchLink(usb,app.benchProfile(),
+                              static_cast<uint32_t>(sceKernelGetProcessTime()));
     // The console has a controller but no text-entry backend in this build.
     // Numeric values step on X or the D-pad rather than opening a dead textbox.
     app.setTextEntryAvailable(false);
@@ -172,7 +174,10 @@ int main() {
                 padWasConnected=false;
             }
         }
-        if(usbReady && app.page()==eulo::Page::Ground && now-lastScan>5000000) {
+        if(usbReady && (app.page()==eulo::Page::Ground ||
+                        app.page()==eulo::Page::Bench) && now-lastScan>2000000) {
+            // Informational discovery reflects edits made inside Bench setup;
+            // it never identifies a board or opens a connection automatically.
             scanUsb(app,usb);lastScan=now;
         }
         app.tick(dt);
