@@ -167,8 +167,8 @@ PAGE = b'''<!doctype html>
   recording.addEventListener('change', async () => {
     const file = recording.files && recording.files[0];
     if (!file) return;
-    if (file.size > 1048576) {
-      status.textContent = 'CSV exceeds the 1 MiB recording limit.';
+    if (file.size > 2097152) {
+      status.textContent = 'CSV exceeds the 2 MiB recording limit.';
       return;
     }
     try {
@@ -443,11 +443,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/recording':
             try:
                 length = int(self.headers.get('Content-Length', '0'))
-                if not 48 <= length <= 1048576 or self.headers.get('Content-Type') != 'text/csv':
+                if not 48 <= length <= 2097152 or self.headers.get('Content-Type') != 'text/csv':
                     raise ValueError('Recording size or media type')
                 body = self.rfile.read(length)
-                header = b'time_s,altitude_m,gx_deg_s,gy_deg_s,gz_deg_s'
-                if len(body) != length or b'\x00' in body or not body.startswith(header + b'\n'):
+                headers = (
+                    b'time_s,altitude_m,gx_deg_s,gy_deg_s,gz_deg_s',
+                    b'time_s,pressure_pa,temperature_c,gx_deg_s,gy_deg_s,gz_deg_s,'
+                    b'ax_m_s2,ay_m_s2,az_m_s2',
+                )
+                if (len(body) != length or b'\x00' in body or not
+                        any(body.startswith(h + b'\n') for h in headers)):
                     raise ValueError('Recording header or binary content')
                 body.decode('ascii')
                 destination = ROOT / 'out' / 'recording.csv'

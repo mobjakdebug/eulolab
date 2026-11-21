@@ -29,6 +29,42 @@ jobs:
           path: out/*.ppm
           retention-days: 7
 
+  arduino-recorder-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: arduino/setup-arduino-cli@5047b2b7ae5084109726aeb5a7ff627a2019cf1d # v2.1.0
+        with:
+          version: '1.6.0'
+      # Representative compile targets only. Nobody supplied actual board IDs,
+      # pinout, sensor/radio modules or instruments; NEVER flash these builds.
+      # The checked-in hardware_config.h defaults to no sensor/RF operation.
+      - name: Install pinned Arduino cores and sensor/radio libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          esp='https://espressif.github.io/arduino-esp32/package_esp32_index.json'
+          stm='https://github.com/stm32duino/BoardManagerFiles/raw/main/package_stmicroelectronics_index.json'
+          arduino-cli core update-index --additional-urls "$esp" --additional-urls "$stm"
+          arduino-cli core install esp32:esp32@3.3.7 --additional-urls "$esp" --additional-urls "$stm"
+          arduino-cli core install STMicroelectronics:stm32@3.1.0 --additional-urls "$esp" --additional-urls "$stm"
+          arduino-cli lib install 'Adafruit BMP3XX Library@2.1.6'
+          arduino-cli lib install 'Adafruit LSM6DS@4.7.4'
+          arduino-cli lib install 'LoRa@0.8.0'
+      - name: Compile .ino recorder + opt-in TX + receiver, no upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          sketch=firmware/arduino/EuloRecorder
+          flags='-DEULO_BOARD_REVIEWED=1 -DEULO_WIRE_PINS_REVIEWED=1 -DEULO_PRESSURE_ADDRESS=0x77 -DEULO_IMU_ADDRESS=0x6A -DEULO_ALLOW_RF_TX=1 -DEULO_RADIO_FREQUENCY_HZ=868000000L -DEULO_RADIO_SS=5 -DEULO_RADIO_RESET=6 -DEULO_RADIO_DIO0=7 -DEULO_RADIO_TX_POWER_DBM=2'
+          for fqbn in esp32:esp32:esp32s3 STMicroelectronics:stm32:Nucleo_64:pnum=NUCLEO_F401RE; do
+            for mode in 0 1 2; do
+              echo "::notice title=Compile only::FQBN $fqbn, role $mode; no identified hardware or pinout"
+              arduino-cli compile --fqbn "$fqbn" --build-property "compiler.cpp.extra_flags=$flags -DEULO_RADIO_MODE=$mode" "$sketch"
+            done
+          done
+
   bench-firmware-compile:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

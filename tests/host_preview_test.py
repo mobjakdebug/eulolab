@@ -97,13 +97,28 @@ class HostPreviewTest(unittest.TestCase):
             urllib.request.urlopen(click).close()  # calibrate in the native inspector
             with urllib.request.urlopen(address + '/frame') as response:
                 self.assertNotEqual(loaded, response.read())
+            sensor_header = ('time_s,pressure_pa,temperature_c,gx_deg_s,gy_deg_s,'
+                             'gz_deg_s,ax_m_s2,ay_m_s2,az_m_s2\n')
+            sensor_content = sensor_header + ''.join(
+                f'{i/10:.1f},100000,20,0,0,0,0,9.81,0\n' for i in range(22))
+            new_upload = urllib.request.Request(address + '/recording',
+                data=sensor_content.encode('ascii'),
+                headers={'Content-Type': 'text/csv'})
+            self.assertEqual(urllib.request.urlopen(new_upload).status, 204)
+            self.assertEqual(file.read_text(), sensor_content)
+            urllib.request.urlopen(load).close()  # v2 also reaches native importer
+            with urllib.request.urlopen(address + '/frame') as response:
+                v2 = response.read()
+            urllib.request.urlopen(click).close()  # pressure baseline
+            with urllib.request.urlopen(address + '/frame') as response:
+                self.assertNotEqual(v2, response.read())
             bad = urllib.request.Request(address + '/recording',
                 data=(header + 'not,a,valid,number,row\n').encode('ascii'),
                 headers={'Content-Type': 'text/csv'})
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(bad)
             self.assertEqual(caught.exception.code, 400)
-            self.assertEqual(file.read_text(), content)
+            self.assertEqual(file.read_text(), sensor_content)
         finally:
             server.shutdown()
             thread.join(timeout=4)

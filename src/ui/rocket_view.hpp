@@ -22,8 +22,7 @@ struct RocketView {
 };
 void drawRocketView(Canvas& canvas, const Rocket& rocket,
                     const MassProperties& mass, const RocketView& view);
-void drawRecordedView(Canvas& canvas, const Rocket& rocket,
-                      const MassProperties& mass, const RocketView& view,
+void drawRecordedView(Canvas& canvas, const RocketView& view,
                       const TelemetrySample& sample, bool calibrated,
-                      double altitudeZero);
+                      double relativeAltitudeM, bool hasPressure);
 }

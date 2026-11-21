@@ -169,7 +169,9 @@ bool App::importTelemetry(const char* path) {
     recordingPath_=source;
     groundTime_=recording_.samples.front().time;
     page_=Page::Ground;playing_=false;focusRegion_=4;
-    status_="Recorded CSV loaded. Calibrate with stationary first 2 s.";
+    status_=recording_.hasPressure()?
+        "Barometer/IMU CSV loaded; device origin unverified. Calibrate first 2 s.":
+        "Legacy altitude/gyro CSV loaded; origin unverified. Calibrate first 2 s.";
     return true;
 }
 int App::fieldCount(int part) const { return part>=0 && part<9 ? counts[part] : 0; }
@@ -762,7 +764,9 @@ void App::action(Action a) {
         case Action::CalibrateRecording: {
             std::string error;
             if(recording_.calibrate(error)) {
-                status_="Stationary-window gyro bias and altitude zero set (relative pose).";
+                status_=recording_.hasPressure()?
+                    "Stationary pressure/gyro baseline set; baro height is relative.":
+                    "Stationary-window gyro bias and altitude zero set (relative pose).";
             } else status_=error;
             break;
         }

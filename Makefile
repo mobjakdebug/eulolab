@@ -24,11 +24,15 @@ out/bench-tests: src/core/bench_link.cpp src/core/bench_board.cpp src/core/bench
 out/stm32-port-tests: firmware/stm32/bench_port.cpp firmware/stm32/bench_port.hpp src/core/bench_board.cpp $(wildcard src/core/bench_*.hpp) tests/stm32_port_tests.cpp | out
 	$(CXX) $(CXXFLAGS) -I. firmware/stm32/bench_port.cpp src/core/bench_board.cpp tests/stm32_port_tests.cpp -o $@
 
-test: out/eulolab-host out/core-tests out/ui-tests out/bench-tests out/stm32-port-tests
+out/arduino-radio-tests: firmware/arduino/EuloRecorder/radio_packet.hpp tests/arduino_radio_tests.cpp | out
+	$(CXX) $(CXXFLAGS) -I. tests/arduino_radio_tests.cpp -o $@
+
+test: out/eulolab-host out/core-tests out/ui-tests out/bench-tests out/stm32-port-tests out/arduino-radio-tests
 	./out/core-tests
 	./out/ui-tests
 	./out/bench-tests
 	./out/stm32-port-tests
+	./out/arduino-radio-tests
 	python3 -m unittest discover -s tests -p '*_test.py'
 
 preview: out/eulolab-host

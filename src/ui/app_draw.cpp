@@ -1,5 +1,6 @@
 // Native software-rendered workbench, shared by the host preview and Orbis.
-// All displayed measurements come from Rocket, MotorCurve or FlightResult.
+// Garage/Flight display design assumptions and predictions; Ground displays
+// user-imported CSV readings (whose physical provenance the app cannot verify).
 #include "app.hpp"
 #include "workbench_layout.hpp"
 #include <algorithm>
@@ -129,7 +130,7 @@ void App::drawTree(Canvas& c) const {
     }
     if(page_==Page::Ground) {
         c.text(16,111,"Data sources",ink,1);
-        c.text(17,144,"Recorded / not live",muted);
+        c.text(17,144,"User file / not live",muted);
         c.rect(15,163,treeW-31,1,rule);
         c.text(17,176,"CSV recording",ink);
         const size_t slash=recordingPath_.find_last_of('/');
@@ -145,7 +146,8 @@ void App::drawTree(Canvas& c) const {
         c.text(17,332,"Calibration",ink);
         c.text(17,368,recording_.calibrated?"Stationary window set":
             "Not calibrated",recording_.calibrated?accent:muted);
-        c.text(17,400,"Pose is relative",muted);
+        c.text(17,400,recording_.hasPressure()?"Baro altitude is relative":
+                   "Pose is relative",muted);
         c.rect(16,439,212,1,rule);
         c.text(17,452,"USB bench / separate",ink);
         if(c.textWidth(usbStatus_)<=210)c.text(17,486,usbStatus_,muted);
@@ -156,7 +158,7 @@ void App::drawTree(Canvas& c) const {
             c.text(17,503,usbStatus_.substr(split+1),muted,0,210);
         }
         c.text(17,538,"No live sensor stream",ink);
-        c.text(17,570,"Manual bench in View > Servo bench",muted,0,211);
+        c.text(17,570,"File source unverified",muted,0,211);
         c.text(17,644,"CSV not saved in .eul",muted,0,212);
         return;
     }
@@ -179,12 +181,12 @@ void App::drawTree(Canvas& c) const {
     if(focusRegion_==2 && !menuOpen_ && !helpMode_)
         c.border(7,treeRowY+selectedPart_*treeRowH+3,treeW-16,treeRowH-6,accent,2);
     const MassProperties mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
-    c.text(16,500,"Mass properties",ink);
+    c.text(16,500,"Estimated mass / CG",ink);
     c.rect(16,526,treeW-32,1,rule);
     thinRow(c,7,532,treeW-14,"Loaded",formatted(mass.loaded*1000,1,"g"));
     thinRow(c,7,568,treeW-14,"Dry",formatted(mass.dry*1000,1,"g"));
     thinRow(c,7,604,treeW-14,"CG / tail",formatted(mass.cgFromTail*1000,0,"mm"));
-    c.text(16,646,"Illustrative mass model",muted,0,treeW-30);
+    c.text(16,646,"Assumed / not weighed",muted,0,treeW-30);
 }
 
 void App::drawInspector(Canvas& c) const {
@@ -250,7 +252,7 @@ void App::drawInspector(Canvas& c) const {
     }
     if(page_==Page::Garage) {
         c.text(inspectorX+16,148,std::string("0")+std::to_string(selectedPart_+1)+
-               "  /  "+partNames[selectedPart_],muted);
+               " / "+partNames[selectedPart_]+" / design inputs",muted,0,288);
         c.rect(inspectorX+16,171,288,1,rule);
         for(int i=0;i<fieldCount(selectedPart_);++i) {
             const int y=fieldY+i*fieldH;
@@ -285,7 +287,7 @@ void App::drawInspector(Canvas& c) const {
             {"Avionics / point mass","Location shifts center of mass."},
             {"Motor / internal sleeve","Thrust data is read-only."},
             {"Idealised deployment","0 mm switches canopy off."},
-            {"Coaxial cylinder or tube","Built insert adds mass and inertia."},
+            {"Coaxial cylinder or tube","Enabled insert adds model mass."},
             {"Open-loop scenario","Illustrative CP and fin forces."},
             {"Visual comparison only","OBJ/STL is not mass or CAD solid."}
         };
@@ -314,7 +316,7 @@ void App::drawInspector(Canvas& c) const {
         sectionButton(c,inspectorX+16,635,288,"Reset component",focusRegion_==5,
                       hoverX_>=inspectorX+16 && hoverX_<1264 && hoverY_>=635 && hoverY_<668);
     } else if(page_==Page::Flight) {
-        c.text(inspectorX+16,148,"Calculated / not flight-rated",muted);
+        c.text(inspectorX+16,148,"Predicted / assumed inputs",muted);
         c.rect(inspectorX+16,171,288,1,rule);
         const FlightSample state=flight_.at(simTime_);
         const struct {const char* name;std::string value;} values[] = {
@@ -341,38 +343,61 @@ void App::drawInspector(Canvas& c) const {
         sectionButton(c,inspectorX+16,635,288,"Edit components",focusRegion_==5,
                       hoverX_>=inspectorX+16 && hoverX_<1264 && hoverY_>=635 && hoverY_<668);
     } else {
-        c.text(inspectorX+16,148,"CSV file / not a USB connection",muted);
+        c.text(inspectorX+16,148,"User CSV / device unverified",muted);
         c.rect(inspectorX+16,171,288,1,rule);
         if(recording_.samples.empty()) {
             c.text(inspectorX+16,202,"No sensor samples loaded",ink);
-            c.text(inspectorX+16,242,"Header and units required:",muted);
-            c.text(inspectorX+16,273,"time_s,altitude_m,...",ink,0,286);
-            c.text(inspectorX+16,304,"gx_deg_s,gy_deg_s,gz_deg_s",muted,0,286);
+            c.text(inspectorX+16,242,"Record with the Arduino logger:",muted);
+            c.text(inspectorX+16,273,"time_s,pressure_pa,...",ink,0,286);
+            c.text(inspectorX+16,304,"Legacy altitude CSV also accepted.",muted,0,286);
             c.rect(inspectorX+16,345,288,1,rule);
-            c.text(inspectorX+16,568,"Recorded CSV, not live data.",ink);
-            c.text(inspectorX+16,591,"Place file next to project.eul.",muted);
+            c.text(inspectorX+16,568,"No measured values in the app.",ink);
+            c.text(inspectorX+16,591,"Import your own recording.",muted);
         } else {
             const TelemetrySample s=recording_.at(groundTime_);
             const bool calibrated=recording_.calibrated;
             const Quaternion q=s.attitude;
             const double cosine=std::clamp(1-2*(q.x*q.x+q.z*q.z),-1.0,1.0);
             const double tilt=std::acos(cosine)*180.0/3.14159265358979323846;
-            const struct {const char* name;std::string value;} values[] = {
-                {"Time",formatted(s.time,2,"s")},
-                {"Raw altitude",formatted(s.altitude,1,"m")},
-                {"Zeroed alt",calibrated?formatted(s.altitude-recording_.altitudeZero,1,"m"):"--"},
-                {"Gyro X",formatted(s.gyro.x,2,"deg/s")},
-                {"Gyro Y",formatted(s.gyro.y,2,"deg/s")},
-                {"Gyro Z",formatted(s.gyro.z,2,"deg/s")},
-                {"Bias X",calibrated?formatted(recording_.gyroBias.x,2,"deg/s"):"--"},
-                {"Bias Y",calibrated?formatted(recording_.gyroBias.y,2,"deg/s"):"--"},
-                {"Bias Z",calibrated?formatted(recording_.gyroBias.z,2,"deg/s"):"--"},
-                {"Relative tilt",calibrated?formatted(tilt,1,"deg"):"--"}
-            };
-            for(int i=0;i<10;++i)compactRow(c,inspectorX+6,fieldY+i*36,305,
-                                            values[i].name,values[i].value);
-            c.text(inspectorX+16,568,calibrated?"Bias + altitude zero set":"Calibration required",ink);
-            c.text(inspectorX+16,591,"Gyro-only attitude drifts over time.",muted,0,288);
+            if(recording_.hasPressure()) {
+                const double bias=std::max({std::fabs(recording_.gyroBias.x),
+                    std::fabs(recording_.gyroBias.y),std::fabs(recording_.gyroBias.z)});
+                const struct {const char* name;std::string value;} values[] = {
+                    {"Time",formatted(s.time,2,"s")},
+                    {"Pressure",formatted(s.pressurePa,0,"Pa")},
+                    {"Temperature",formatted(s.temperatureC,1,"C")},
+                    {"Baro delta",calibrated?formatted(recording_.relativeAltitude(s),1,"m"):"--"},
+                    {"Gyro X",formatted(s.gyro.x,2,"deg/s")},
+                    {"Gyro Y",formatted(s.gyro.y,2,"deg/s")},
+                    {"Gyro Z",formatted(s.gyro.z,2,"deg/s")},
+                    {"Accel X",formatted(s.acceleration.x,2,"m/s2")},
+                    {"Accel Y",formatted(s.acceleration.y,2,"m/s2")},
+                    {"Accel Z",formatted(s.acceleration.z,2,"m/s2")},
+                    {"Max gyro bias",calibrated?formatted(bias,2,"deg/s"):"--"},
+                    {"Relative tilt",s.attitudeValid?formatted(tilt,1,"deg"):"--"}
+                };
+                for(int i=0;i<12;++i)compactRow(c,inspectorX+6,fieldY+i*31,305,
+                                                values[i].name,values[i].value);
+            } else {
+                const struct {const char* name;std::string value;} values[] = {
+                    {"Time",formatted(s.time,2,"s")},
+                    {"CSV altitude",formatted(s.altitude,1,"m")},
+                    {"Zeroed alt",calibrated?formatted(recording_.relativeAltitude(s),1,"m"):"--"},
+                    {"Gyro X",formatted(s.gyro.x,2,"deg/s")},
+                    {"Gyro Y",formatted(s.gyro.y,2,"deg/s")},
+                    {"Gyro Z",formatted(s.gyro.z,2,"deg/s")},
+                    {"Bias X",calibrated?formatted(recording_.gyroBias.x,2,"deg/s"):"--"},
+                    {"Bias Y",calibrated?formatted(recording_.gyroBias.y,2,"deg/s"):"--"},
+                    {"Bias Z",calibrated?formatted(recording_.gyroBias.z,2,"deg/s"):"--"},
+                    {"Relative tilt",s.attitudeValid?formatted(tilt,1,"deg"):"--"}
+                };
+                for(int i=0;i<10;++i)compactRow(c,inspectorX+6,fieldY+i*36,305,
+                                                values[i].name,values[i].value);
+            }
+            c.text(inspectorX+16,568,calibrated?
+                s.attitudeValid?"Stationary reference set":"Pose lost at a data gap":
+                "Calibration required",ink);
+            c.text(inspectorX+16,591,"Gyro-only pose drifts; no GPS.",muted,0,288);
         }
         const char* button=recording_.samples.empty()?"Load recorded CSV":
             recording_.calibrated?"Recalibrate first 2 s":"Calibrate first 2 s";
@@ -405,11 +430,17 @@ void App::drawAnalysis(Canvas& c) const {
     }
     if(page_==Page::Ground) {
         c.text(viewX+16,analysisY+5,"Station log",ink);
-        c.text(viewX+120,analysisY+5,recording_.calibrated?
-            "/ zeroed altitude vs time":"/ raw altitude vs time",muted);
+        c.text(viewX+120,analysisY+5,recording_.hasPressure()?
+            "/ derived barometric delta (not GPS)":recording_.calibrated?
+            "/ zeroed CSV altitude vs time":"/ raw CSV altitude vs time",muted);
         if(recording_.samples.empty()) {
             c.text(viewX+16,analysisY+44,"No recorded data. File > Load recorded CSV.",muted);
             c.text(viewX+16,analysisY+73,"Bench USB does not supply sensor samples.",muted);
+            return;
+        }
+        if(recording_.hasPressure() && !recording_.calibrated) {
+            c.text(viewX+16,analysisY+54,
+                   "Calibrate stationary pressure to derive relative altitude.",muted);
             return;
         }
         const int x0=314,x1=919,y0=653,y1=600;
@@ -429,16 +460,25 @@ void App::drawAnalysis(Canvas& c) const {
         c.text(viewX+16,analysisY+38,formatted(highest-zero,1,"m"),accent);
         c.text(viewX+16,analysisY+79,formatted(lowest-zero,1,"m"),muted);
         c.line(x0,y1,x0,y0,rule);c.line(x0,y0,x1,y0,rule);
-        const int skip=std::max(1,static_cast<int>(recording_.samples.size()/550));
+        const size_t skip=std::max<size_t>(1,recording_.samples.size()/550);
+        size_t lastIndex=0;
         int lastX=x0,lastY=yPos(recording_.samples.front().altitude);
-        for(size_t i=static_cast<size_t>(skip);i<recording_.samples.size();
-            i+=static_cast<size_t>(skip)) {
+        const auto segment=[&](size_t to,int x,int y) {
+            bool continuous=true;
+            for(size_t j=lastIndex+1;j<=to;++j)
+                if(recording_.samples[j].time-recording_.samples[j-1].time>.25)
+                    continuous=false;
+            if(continuous)c.line(lastX,lastY,x,y,accent,2);
+            else c.circle(x,y,2,accent); // a gap is not an invented trajectory
+            lastIndex=to;lastX=x;lastY=y;
+        };
+        for(size_t i=skip;i<recording_.samples.size();i+=skip) {
             const auto& s=recording_.samples[i];
-            const int x=x0+static_cast<int>((s.time-start)/duration*(x1-x0));
-            const int y=yPos(s.altitude);
-            c.line(lastX,lastY,x,y,accent,2);lastX=x;lastY=y;
+            segment(i,x0+static_cast<int>((s.time-start)/duration*(x1-x0)),
+                    yPos(s.altitude));
         }
-        c.line(lastX,lastY,x1,yPos(recording_.samples.back().altitude),accent,2);
+        segment(recording_.samples.size()-1,x1,
+                yPos(recording_.samples.back().altitude));
         const int cursor=x0+static_cast<int>((groundTime_-start)/duration*(x1-x0));
         c.line(cursor,y1-2,cursor,y0+4,dark);
         c.circle(cursor,yPos(recording_.at(groundTime_).altitude),4,dark);
@@ -498,7 +538,7 @@ void App::drawStatus(Canvas& c) const {
     c.rect(0,statusY,1280,1,rule);
     c.rect(15,statusY+13,7,7,accent);
     c.text(31,statusY+6,status_,ink,0,615);
-    c.text(697,statusY+6,page_==Page::Ground?"RECORDED DATA / NOT LIVE":
+    c.text(697,statusY+6,page_==Page::Ground?"USER CSV / DEVICE UNVERIFIED":
            page_==Page::Bench?"USB BENCH / NOT FLIGHT":
            "MODEL ONLY / NOT FLIGHT-RATED",muted);
     const std::string label=demoMode_?"HOST REPLAY / NOT PS4":runtimeLabel_;
@@ -730,13 +770,13 @@ void App::draw(Canvas& c,double /*now*/) const {
             c.text(viewX+73,viewY+319,"Servo bench is separate; no live sensor feed.",muted);
             c.border(viewX,viewY,viewW,viewH,rule);
         } else {
-            const MassProperties mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
             RocketView view;
             view.x=viewX;view.y=viewY;view.w=viewW;view.h=viewH;
             view.yaw+=yawOffset_;view.pitch+=pitchOffset_;view.zoom=zoom_;
             view.cameraPreset=cameraPreset_;
-            drawRecordedView(c,rocket_,mass,view,recording_.at(groundTime_),
-                             recording_.calibrated,recording_.altitudeZero);
+            const TelemetrySample sample=recording_.at(groundTime_);
+            drawRecordedView(c,view,sample,recording_.calibrated,
+                             recording_.relativeAltitude(sample),recording_.hasPressure());
         }
     } else {
         const MassProperties mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);

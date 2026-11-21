@@ -287,7 +287,7 @@ void drawRocketView(Canvas& c,const Rocket& r,const MassProperties& mass,const R
             c.line(center-half,top,center+half,top,accent);
             c.line(center-half,bottom,center+half,bottom,accent);
             char label[80];
-            std::snprintf(label,sizeof(label),"BUILT INSERT / %.1f x %.1f mm",
+            std::snprintf(label,sizeof(label),"MODEL INSERT / %.1f x %.1f mm",
                           r.insertLength*1000,r.insertOuterRadius*2000);
             c.text(v.x+17,v.y+76,label,accent,0,360);
         }
@@ -301,7 +301,7 @@ void drawRocketView(Canvas& c,const Rocket& r,const MassProperties& mass,const R
     const int cgY=project({0,mass.cgFromTail,0}).y;
     c.line(center-80,cgY,center-22,cgY,accent);
     c.circle(center-18,cgY,3,accent);
-    c.text(center-80,cgY-24,"CG",accent);
+    c.text(center-80,cgY-24,"CG*",accent);
     if(v.selected==3 || v.selected==4 || v.selected==5 ||
        (v.selected==6 && r.insertEnabled)) {
         const double at=v.selected==3?r.electronicsFromTail:
@@ -325,54 +325,55 @@ void drawRocketView(Canvas& c,const Rocket& r,const MassProperties& mass,const R
     c.resetClip();
 }
 
-void drawRecordedView(Canvas& c,const Rocket& r,const MassProperties& mass,
-                      const RocketView& v,const TelemetrySample& sample,
-                      bool calibrated,double altitudeZero) {
+void drawRecordedView(Canvas& c,const RocketView& v,
+                      const TelemetrySample& sample,bool calibrated,
+                      double relativeAltitudeM,bool hasPressure) {
     c.setClip(v.x,v.y,v.w,v.h);
     c.rect(v.x,v.y,v.w,v.h,backdrop);
     c.rect(v.x,v.y,v.w,39,rgb(247,249,249));
     c.rect(v.x,v.y+38,v.w,1,rule);
-    c.text(v.x+17,v.y+9,"GROUND / RECORDED GYRO + ALTITUDE",rgb(38,53,62));
-    if(calibrated)cameraControls(c,v);
-    c.text(v.x+17,v.y+52,"CSV PLAYBACK  /  NOT LIVE OR CONNECTED",muted);
+    c.text(v.x+17,v.y+9,"GROUND / RECORDED SENSOR DATA",rgb(38,53,62));
+    if(calibrated && sample.attitudeValid)cameraControls(c,v);
+    c.text(v.x+17,v.y+52,"CSV PLAYBACK  /  DEVICE ORIGIN NOT VERIFIED",muted);
     if(!calibrated) {
         c.rect(v.x+37,v.y+153,v.w-74,1,rule);
-        c.text(v.x+39,v.y+179,"Calibration required for relative attitude",rgb(38,53,62),1);
-        c.text(v.x+39,v.y+230,"Keep the first two seconds stationary in the recording.",muted);
-        c.text(v.x+39,v.y+262,"Use Calibrate in the inspector to zero gyro and altitude.",muted);
-        c.text(v.x+39,v.y+294,"Raw values are available; no pose is inferred yet.",muted);
+        c.text(v.x+39,v.y+179,"No relative attitude or altitude reference",rgb(38,53,62),1);
+        c.text(v.x+39,v.y+230,"Record the first two seconds with the IMU stationary.",muted);
+        c.text(v.x+39,v.y+262,"Calibrate in the inspector to set the initial reference.",muted);
+        c.text(v.x+39,v.y+294,"Raw CSV readings are shown without a vehicle model.",muted);
     } else {
-        const int centerX=v.x+v.w/2+36,centerY=v.y+259;
-        c.line(centerX,centerY-148,centerX,centerY+142,rule);
-        c.line(v.x+v.w/2-116,centerY,v.x+v.w/2+180,centerY,rule);
-        const double scale=252.0/(r.bodyLength+r.noseLength)*v.zoom;
-        const auto project=[&](Point3 point)->Screen {
-            const Point3 centered{point.x,point.y-mass.cgFromTail,point.z};
-            const Point3 world=rotate(sample.attitude,centered);
-            const Point3 p=camera(world,v.yaw,v.pitch);
-            return {centerX+static_cast<int>(p.x*scale),
-                    centerY-static_cast<int>(p.y*scale),p.z};
-        };
-        renderMesh(c,r,-1,v.yaw,project);
-        const Screen cg=project({0,mass.cgFromTail,0});
-        c.circle(cg.x,cg.y,4,accent);
-        const double axes=std::min(.12,r.bodyLength*.35);
-        const Screen localX=project({axes,mass.cgFromTail,0});
-        const Screen localY=project({0,mass.cgFromTail+axes,0});
-        const Screen localZ=project({0,mass.cgFromTail,axes});
-        c.line(cg.x,cg.y,localX.x,localX.y,rgb(128,152,163),2);
-        c.line(cg.x,cg.y,localY.x,localY.y,accent,2);
-        c.line(cg.x,cg.y,localZ.x,localZ.y,rgb(96,117,124),2);
-        c.text(localX.x+3,localX.y-11,"X",muted);
-        c.text(localY.x+3,localY.y-11,"Y",accent);
-        c.text(localZ.x+3,localZ.y-11,"Z",muted);
+        const int centerX=v.x+v.w/2+36,centerY=v.y+255;
+        if(sample.attitudeValid) {
+            c.line(centerX,centerY-147,centerX,centerY+143,rule);
+            c.line(centerX-147,centerY,centerX+147,centerY,rule);
+            // A rotating body-axis triad represents integrated sensor rates.
+            // Drawing the project's rocket here would falsely imply a measured
+            // vehicle shape, installation orientation or actual fin travel.
+            const auto project=[&](Point3 point)->Screen {
+                const Point3 p=camera(rotate(sample.attitude,point),v.yaw,v.pitch);
+                const double scale=125.0*v.zoom;
+                return {centerX+static_cast<int>(p.x*scale),
+                        centerY-static_cast<int>(p.y*scale),p.z};
+            };
+            const Screen origin=project({0,0,0});
+            const Screen x=project({1,0,0}),y=project({0,1,0}),z=project({0,0,1});
+            c.line(origin.x,origin.y,x.x,x.y,rgb(128,152,163),3);
+            c.line(origin.x,origin.y,y.x,y.y,accent,3);
+            c.line(origin.x,origin.y,z.x,z.y,rgb(96,117,124),3);
+            c.circle(origin.x,origin.y,5,accent);
+            c.text(x.x+5,x.y-11,"X",muted);
+            c.text(y.x+5,y.y-11,"Y",accent);
+            c.text(z.x+5,z.y-11,"Z",muted);
+        } else c.text(v.x+70,v.y+215,
+            "Orientation unavailable after a sample gap",rgb(38,53,62),1);
         c.rect(v.x+18,v.y+330,315,1,rule);
-        c.text(v.x+18,v.y+344,"BODY FRAME RELATIVE TO FIRST SAMPLE",muted,0,320);
-        c.text(v.x+18,v.y+376,"No GPS, magnetometer or horizontal position.",muted,0,370);
-        c.text(v.x+18,v.y+407,"Model shape is the editable design, not a scan.",muted,0,370);
+        c.text(v.x+18,v.y+344,"SENSOR AXES / RELATIVE TO FIRST SAMPLE",muted,0,390);
+        c.text(v.x+18,v.y+376,"Gyro-only pose drifts; no GPS or position.",muted,0,385);
+        c.text(v.x+18,v.y+407,"No measured rocket shape or actuator travel.",muted,0,385);
         char altitude[80];
-        std::snprintf(altitude,sizeof(altitude),"ZEROED ALT  %+.1f m",sample.altitude-altitudeZero);
-        c.text(v.x+v.w-248,v.y+v.h-41,altitude,accent,0,237);
+        std::snprintf(altitude,sizeof(altitude),"%s  %+.1f m",
+                      hasPressure?"BARO DELTA":"CSV ALT DELTA",relativeAltitudeM);
+        c.text(v.x+v.w-280,v.y+v.h-41,altitude,accent,0,266);
     }
     c.border(v.x,v.y,v.w,v.h,rule);
     c.resetClip();

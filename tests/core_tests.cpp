@@ -4,6 +4,7 @@
 #include "core/telemetry.hpp"
 #include "core/mesh.hpp"
 #include "core/bench_wire.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -151,10 +152,70 @@ static void testTelemetry() {
     std::remove(path);
     std::puts("PASS telemetry: CSV bounds, stationary calibration, gyro integration, transactional failure");
 }
+void testSensorTelemetry() {
+    const char* path="out/sensor-test.csv"; // synthetic fixture confined to tests
+    const char* columns="time_s,pressure_pa,temperature_c,gx_deg_s,gy_deg_s,gz_deg_s,ax_m_s2,ay_m_s2,az_m_s2\n";
+    FILE* file=std::fopen(path,"wb");
+    assert(file && std::fputs(columns,file)>0);
+    for(int i=0;i<=40;++i)
+        assert(std::fprintf(file,"%.2f,%.2f,20,0,%d,0,0,9.81,0\n",
+            i*.1,100000.0-std::max(0,i-20)*8.0,i>20?20:0)>0);
+    assert(std::fclose(file)==0);
+    TelemetryRecording record;
+    std::string error;
+    assert(record.load(path,error) && record.hasPressure() &&
+           record.samples.size()==41 && !record.calibrated);
+    assert(record.samples.front().pressurePa==100000 && record.samples.back().altitude==0);
+    assert(record.calibrate(error) && near(record.pressureZeroPa,100000) &&
+           near(record.samples.front().altitude,0) &&
+           record.samples.back().altitude>12 && record.samples.back().altitude<15 &&
+           record.samples.back().attitudeValid);
+    const auto mid=record.at(3.55);
+    assert(mid.attitudeValid && mid.temperatureC==20 &&
+           near(mid.acceleration.y,9.81) && mid.pressurePa>99870 &&
+           near(mid.altitude,(record.at(3.5).altitude+record.at(3.6).altitude)/2));
+    // Sparse radio samples must NOT create a fictitious interpolated flight
+    // trajectory or a gyro-only attitude across an interval without data.
+    file=std::fopen(path,"wb");assert(file && std::fputs(columns,file)>0);
+    for(int i=0;i<=20;++i)
+        assert(std::fprintf(file,"%.2f,100000,20,0,0,0,0,9.81,0\n",i*.1)>0);
+    assert(std::fputs("4.00,99800,20,0,0,0,0,9.81,0\n"
+                      "4.10,99790,20,0,0,0,0,9.81,0\n",file)>0);
+    assert(std::fclose(file)==0);
+    TelemetryRecording gaps;
+    assert(gaps.load(path,error) && gaps.calibrate(error));
+    assert(gaps.at(1).attitudeValid && !gaps.at(4).attitudeValid &&
+           !gaps.at(3).attitudeValid && gaps.at(3).time==2.0 &&
+           gaps.at(4).altitude>gaps.at(2).altitude);
+    // A failed new import must never replace a previously calibrated file.
+    const char* invalid[]={
+        "0,99999,20,nan,0,0,0,9.81,0\n",
+        "0,0,20,0,0,0,0,9.81,0\n",
+        "0,99999,20,0,0,0,0,9.81,0,1\n",
+        "0,99999,20,0,0,0,0,9.81,0\n0,99998,20,0,0,0,0,9.81,0\n"
+    };
+    for(const char* rows:invalid) {
+        file=std::fopen(path,"wb");
+        assert(file && std::fputs(columns,file)>0 && std::fputs(rows,file)>0 &&
+               std::fclose(file)==0);
+        assert(!record.load(path,error) && record.calibrated && record.samples.size()==41);
+    }
+    // No stationary reference if the initial IMU acceleration is not near 1 g.
+    file=std::fopen(path,"wb");assert(file && std::fputs(columns,file)>0);
+    for(int i=0;i<=20;++i)
+        assert(std::fprintf(file,"%.2f,100000,20,0,0,0,0,17,0\n",i*.1)>0);
+    assert(std::fclose(file)==0);
+    TelemetryRecording moving;
+    assert(moving.load(path,error) && !moving.calibrate(error) &&
+           error.find("stationary")!=std::string::npos);
+    std::remove(path);
+    std::puts("PASS sensor CSV: raw pressure/IMU, relative baro altitude, gaps and fail-closed import");
+}
 int main() {
     testBenchWire();
     testMeshes();
     testTelemetry();
+    testSensorTelemetry();
     auto motor = from("; test\nDUMMY 18 70 P .01 .02 TEST\n1 10\n2 0\n;");
     assert(motor.points.size() == 3 && motor.points[0].time == 0);
     assert(near(motor.thrust(0.5), 5) && near(motor.thrust(1.5), 5));
