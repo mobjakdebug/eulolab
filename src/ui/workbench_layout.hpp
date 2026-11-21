@@ -13,11 +13,12 @@ constexpr int treeRowY=170, treeRowH=36;
 struct MenuItem { const char* label; Action action; };
 struct Menu { const char* label; int x,w,count; MenuItem items[8]; };
 inline constexpr Menu menus[] = {
-    {"File",12,51,7,{{"New project",Action::NewProject},{"Open project",Action::Load},
+    {"File",12,51,8,{{"New project",Action::NewProject},{"Open project",Action::Load},
                       {"Save project",Action::Save},{"Load recorded CSV",Action::LoadRecording},
                       {"Import reference OBJ",Action::ImportObj},
                       {"Import reference STL",Action::ImportStl},
-                      {"Export visual OBJ",Action::ExportObj}}},
+                      {"Export visual OBJ",Action::ExportObj},
+                      {"Load fin inspection",Action::LoadFinInspection}}},
     {"Edit",64,52,2,{{"Undo last edit",Action::Undo},{"Reset component",Action::ResetPart},
                        {"",Action::Save},{"",Action::Save}}},
     {"View",117,56,8,{{"Assembly workspace",Action::Garage},{"Flight analysis",Action::Flight},

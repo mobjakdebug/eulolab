@@ -115,6 +115,7 @@ void testEveryProperty() {
             render(app,canvas,frame);
             const Frame before=frame;
             const double old=get(app.rocket(),p,i);
+            assert(app.rocket().origin(p,i)==InputOrigin::Template);
             const double requested=alternatives[p][i];
             assert(!near(requested,old));
             if(!app.setSelectedValue(requested)) {
@@ -123,6 +124,10 @@ void testEveryProperty() {
                 std::abort();
             }
             assert(near(get(app.rocket(),p,i),requested));
+            if(app.rocket().origin(p,i)!=InputOrigin::UserDesign) {
+                std::fprintf(stderr,"Origin mismatch: section %d field %d\n",p,i);
+                std::abort();
+            }
             assert(app.rocket().valid() && app.flight().valid);
             render(app,canvas,frame);
             assert(before!=frame); // actual pixels reflect the model change
@@ -141,6 +146,11 @@ void testEveryProperty() {
     assert(near(stepped.rocket().parachuteDiameter,0));
     stepped.action(Action::Increase);
     assert(near(stepped.rocket().parachuteDiameter,.1));
+    select(stepped,0,4);assert(stepped.setSelectedValue(1420));
+    assert(stepped.rocket().origin(0,4)==InputOrigin::UserDesign);
+    select(stepped,0,3);assert(stepped.setSelectedValue(1));
+    assert(stepped.rocket().origin(0,3)==InputOrigin::UserDesign &&
+           stepped.rocket().origin(0,4)==InputOrigin::Template);
     select(stepped,0,1);
     assert(!stepped.setSelectedValue(20)); // internal sleeve does not fit a 20 mm tube
     assert(stepped.status().find("dependent geometry")!=std::string::npos);
@@ -408,7 +418,7 @@ void testStation() {
            app.status().find("cursor")!=std::string::npos);
     render(app,canvas,frame);
     assert(calibrated!=frame);
-    app.key("F4"); // view preset changes the actual gyro-driven mesh
+    app.key("F4"); // view preset changes the gyro-integrated sensor triad
     const Frame beforeTop=frame;
     render(app,canvas,frame);
     assert(beforeTop!=frame);
@@ -422,6 +432,61 @@ void testStation() {
     assert(app.recording().calibrated && app.recording().samples.size()==41);
     std::remove(path);
     std::puts("PASS station: recorded CSV, calibration, scrub/playback, relative pose and rejected file");
+}
+void testFinMeasurementsUI() {
+    std::filesystem::create_directories("out/fin-ui");
+    const char* path="out/fin-ui/fin-inspection.csv";
+    std::remove(path);
+    App app;
+    assert(app.init("assets/font-atlas.bin","assets/motors","out/fin-ui/project.eul"));
+    auto frame=pixels();Canvas canvas(frame.data()+1,w,h,app.font());
+    select(app,2,1);render(app,canvas,frame);
+    const Frame noLog=frame;
+    app.action(Action::LoadFinInspection);
+    assert(app.finInspection().fins.empty() &&
+           app.status().find("Cannot open")!=std::string::npos);
+    FILE* file=std::fopen(path,"wb");
+    assert(file && std::fputs("EULOFINS/1\nobserved_utc=2026-11-20T10:20:30Z\n"
+        "operator=Test operator\ninstrument=Test angle gauge\nfin_count=3\n"
+        "fin_number,span_mm,root_chord_mm,tip_chord_mm,sweep_mm,thickness_mm,root_setback_mm,cant_deg,azimuth_deg\n"
+        "1,48,95,52,24,2.5,6.0,-0.2,0\n2,49,95,52,24,2.5,6.2,0,120\n"
+        "3,47,95,52,24,2.5,5.8,0.4,240\n",file)>0 && std::fclose(file)==0);
+    const double modelSpan=app.rocket().finSpan;
+    const double predicted=app.flight().apogee;
+    menu(app,0,7); // File > Load fin inspection; not used as solver input
+    assert(app.page()==Page::Garage && app.selectedPart()==2 &&
+           app.finInspection().fins.size()==3 &&
+           app.rocket().origin(2,1)==InputOrigin::Template &&
+           near(app.rocket().finSpan,modelSpan) && near(app.flight().apogee,predicted));
+    render(app,canvas,frame);
+    assert(noLog!=frame);
+    select(app,2,6);render(app,canvas,frame); // per-fin setback, not model input
+    const Frame setback=frame;
+    select(app,2,7);render(app,canvas,frame);
+    assert(setback!=frame); // material choice has no per-fin dimensional match
+    select(app,2,1);
+    app.click(550,623); // read-only table must not jump to Flight
+    assert(app.page()==Page::Garage);
+    app.action(Action::Increase); // keyboard moves the observed-field comparison
+    assert(app.selectedField()==2 && app.page()==Page::Garage);
+    select(app,2,0);
+    assert(app.setSelectedValue(4) && app.finInspection().fins.size()==3);
+    render(app,canvas,frame); // count mismatch is visibly signalled, not approved
+    app.action(Action::ResetPart);
+    assert(app.finInspection().fins.empty() && app.rocket().finCount==3);
+    // Reimport the unchanged file for the atomic-failure and new-project tests.
+    app.action(Action::LoadFinInspection);
+    assert(app.finInspection().fins.size()==3);
+    file=std::fopen(path,"wb");
+    assert(file && std::fputs("invalid\n",file)>0 && std::fclose(file)==0);
+    app.key("i",true); // invalid replacement cannot clear previous log
+    assert(app.finInspection().fins.size()==3);
+    app.action(Action::NewProject);
+    assert(app.discardConfirmationOpen()); // model edit still requires confirmation
+    app.click(777,433); // discard the model edits and clear old inspection
+    assert(!app.discardConfirmationOpen() && app.finInspection().fins.empty());
+    std::remove(path);
+    std::puts("PASS fin UI: operator inspection display, no solver coupling, atomic import, clear on new project");
 }
 struct FakeBench final : BenchControl {
     const bench::Profile* profile=nullptr;
@@ -597,6 +662,7 @@ int main() {
     testCommandsAndInput();
     testReferenceUI();
     testStation();
+    testFinMeasurementsUI();
     testBenchUI();
     testReplay();
 }

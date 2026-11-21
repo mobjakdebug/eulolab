@@ -1,5 +1,7 @@
 // EuloLab educational model-rocket simulator core (MIT, see LICENSE).
 #pragma once
+#include <array>
+#include <cstdint>
 #include <string>
 
 namespace eulo {
@@ -7,6 +9,9 @@ namespace eulo {
 enum class Material : int { PVC = 0, Aluminium = 1, CarbonLaminate = 2 };
 enum class NoseProfile : int { Cone = 0, TangentOgive = 1 };
 enum class FinMaterial : int { Balsa = 0, Plywood = 1, CarbonLaminate = 2 };
+// Source of each editable MODEL input, never a certification of measurement.
+// Old project formats had no provenance and must not be called user-entered.
+enum class InputOrigin : uint8_t { Template=0, UserDesign=1, LegacyUnknown=2 };
 const char* materialName(Material material);
 const char* finMaterialName(FinMaterial material);
 const char* noseProfileName(NoseProfile profile);
@@ -82,6 +87,10 @@ struct Rocket {
     double referenceEastMm = 0.0;
     double referenceTailMm = 0.0;
     double referenceNorthMm = 0.0;
+    static constexpr int inputCount=52;
+    std::array<InputOrigin,inputCount> inputOrigins{}; // defaults = Template
+    InputOrigin origin(int part,int field) const;
+    bool markOrigin(int part,int field,InputOrigin source);
     bool valid() const;
 };
 

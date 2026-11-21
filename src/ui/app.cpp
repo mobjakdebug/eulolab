@@ -119,6 +119,7 @@ bool App::init(const char* fontPath,const char* motorDirectory,const char* proje
     const std::string directoryPrefix=slash==std::string::npos?std::string():
                                       projectPath_.substr(0,slash+1);
     recordingPath_=directoryPrefix+"recording.csv";
+    finInspectionPath_=directoryPrefix+"fin-inspection.csv";
     benchProfilePath_=directoryPrefix+"bench-profile.cfg";
     std::string profileError;
     benchProfileSaved_=bench::loadProfile(benchProfile_,benchProfilePath_.c_str(),
@@ -151,8 +152,10 @@ bool App::importReference(int format) {
     if(!loadReference(format,candidate,error)) {status_=error;return false;}
     const Rocket before=rocket_;
     rocket_.referenceFormat=format;
+    rocket_.markOrigin(8,0,InputOrigin::UserDesign);
     reference_=std::move(candidate);
-    if(before.referenceFormat!=format) {
+    if(before.referenceFormat!=format ||
+       before.origin(8,0)!=rocket_.origin(8,0)) {
         previousRocket_=before;hasUndo_=true;dirty_=true;
     }
     page_=Page::Garage;selectedPart_=8;selectedField_=0;focusRegion_=3;playing_=false;
@@ -172,6 +175,18 @@ bool App::importTelemetry(const char* path) {
     status_=recording_.hasPressure()?
         "Barometer/IMU CSV loaded; device origin unverified. Calibrate first 2 s.":
         "Legacy altitude/gyro CSV loaded; origin unverified. Calibrate first 2 s.";
+    return true;
+}
+bool App::importFinInspection(const char* path) {
+    leaveBench();
+    FinInspection next;
+    std::string error;
+    if(!next.load(path,error)) {status_=error;return false;}
+    finInspection_=std::move(next);
+    finInspectionPath_=path;
+    page_=Page::Garage;selectedPart_=2;selectedField_=1;
+    focusRegion_=3;playing_=false;
+    status_="Fin log loaded. Readings unverified; model unchanged.";
     return true;
 }
 int App::fieldCount(int part) const { return part>=0 && part<9 ? counts[part] : 0; }
@@ -275,7 +290,7 @@ std::string App::valueText(int part,int index) const {
         if(part==1)return materialName(rocket_.noseMaterial);
         if(part==2)return finMaterialName(rocket_.finMaterial);
         if(part==4)return motor().name;
-        if(part==6 && index==0)return rocket_.insertEnabled?"BUILT":"NOT BUILT";
+        if(part==6 && index==0)return rocket_.insertEnabled?"IN MODEL":"OFF";
         if(part==6)return materialName(rocket_.insertMaterial);
         if(part==8)return rocket_.referenceFormat==0?"NONE":
             rocket_.referenceFormat==1?"OBJ":"STL";
@@ -399,6 +414,13 @@ bool App::applyField(int part,int index,double value) {
             "Rejected: dependent geometry must fit inside the body.";
         return false;
     }
+    rocket_.markOrigin(part,index,InputOrigin::UserDesign);
+    // Selecting a template material also assigns a template *density*;
+    // never retain the previous density's user-entered provenance.
+    if(part==0 && index==3)rocket_.markOrigin(0,4,InputOrigin::Template);
+    if(part==1 && index==3)rocket_.markOrigin(1,4,InputOrigin::Template);
+    if(part==2 && index==7)rocket_.markOrigin(2,8,InputOrigin::Template);
+    if(part==6 && index==5)rocket_.markOrigin(6,6,InputOrigin::Template);
     previousRocket_=before;
     hasUndo_=true;
     dirty_=true;
@@ -478,6 +500,9 @@ void App::resetSelectedPart() {
         return;
     }
     if(selectedPart_==8)reference_=ReferenceMesh{};
+    if(selectedPart_==2)finInspection_=FinInspection{};
+    for(int i=0;i<fieldCount(selectedPart_);++i)
+        rocket_.markOrigin(selectedPart_,i,InputOrigin::Template);
     previousRocket_=before;hasUndo_=true;dirty_=true;rebuild();
     status_=std::string(workbench::partNames[selectedPart_])+" restored to defaults.";
 }
@@ -662,12 +687,14 @@ void App::action(Action a) {
     }
     if(page_==Page::Bench && (a==Action::NewProject || a==Action::Garage ||
        a==Action::Flight || a==Action::Ground || a==Action::LoadRecording ||
-       a==Action::ImportObj || a==Action::ImportStl || a==Action::Load ||
+       a==Action::LoadFinInspection || a==Action::ImportObj ||
+       a==Action::ImportStl || a==Action::Load ||
        a==Action::JumpApogee || a==Action::NextPart || a==Action::PrevPart ||
        a==Action::Back))leaveBench();
     switch(a) {
         case Action::NewProject:
-            rocket_=Rocket{};reference_=ReferenceMesh{};rebuild();
+            rocket_=Rocket{};reference_=ReferenceMesh{};
+            finInspection_=FinInspection{};rebuild();
             page_=Page::Garage;selectedPart_=0;
             selectedField_=0;focusRegion_=3;simTime_=0;playing_=false;
             dirty_=false;saved_=false;hasUndo_=false;
@@ -761,6 +788,8 @@ void App::action(Action a) {
             break;
         case Action::LoadRecording:
             importTelemetry(recordingPath_.c_str());break;
+        case Action::LoadFinInspection:
+            importFinInspection(finInspectionPath_.c_str());break;
         case Action::CalibrateRecording: {
             std::string error;
             if(recording_.calibrate(error)) {
@@ -797,7 +826,12 @@ void App::action(Action a) {
             else selectedField_=(selectedField_+fieldCount(selectedPart_)-1)%fieldCount(selectedPart_);
             focusRegion_=3;break;
         case Action::Increase:case Action::Decrease:
-            if(focusRegion_==4 && page_==Page::Ground && !recording_.samples.empty()) {
+            if(focusRegion_==4 && page_==Page::Garage && selectedPart_==2 &&
+               !finInspection_.fins.empty()) {
+                selectedField_=(selectedField_+(a==Action::Increase?1:
+                    fieldCount(selectedPart_)-1))%fieldCount(selectedPart_);
+                status_="Read-only fin log: select a design field to compare.";
+            } else if(focusRegion_==4 && page_==Page::Ground && !recording_.samples.empty()) {
                 groundTime_=std::clamp(groundTime_+(a==Action::Increase?.5:-.5),
                     recording_.samples.front().time,recording_.samples.back().time);
                 playing_=false;status_="Recorded-data cursor set from timeline.";
@@ -847,6 +881,7 @@ void App::action(Action a) {
             const bool linked=candidate.referenceFormat==0 ||
                 loadReference(candidate.referenceFormat,mesh,error);
             rocket_=candidate;reference_=std::move(mesh);
+            finInspection_=FinInspection{}; // a different design needs a new inspection
             rebuild();dirty_=false;saved_=true;page_=Page::Garage;
             focusRegion_=3;playing_=false;hasUndo_=false;
             status_=!linked?"Project loaded; linked reference mesh is missing or invalid.":
@@ -866,7 +901,11 @@ void App::action(Action a) {
             }
             else if(focusRegion_==1)action(workbench::tools[toolbarFocus_].action);
             else if(focusRegion_==0)action(Action::Menu);
-            else if(focusRegion_==4)action(Action::TogglePlay);
+            else if(focusRegion_==4) {
+                if(page_==Page::Garage && selectedPart_==2 &&
+                   !finInspection_.fins.empty())focusRegion_=3;
+                else action(Action::TogglePlay);
+            }
             else if(focusRegion_==5) {
                 if(page_==Page::Bench && benchSetup_) {
                     constexpr Action buttons[]={Action::BenchConnect,Action::BenchApplyPins,
@@ -1018,6 +1057,7 @@ void App::key(const std::string& name,bool ctrl,bool shift) {
         if(name=="n" || name=="N") {action(Action::NewProject);return;}
         if(name=="z" || name=="Z") {action(Action::Undo);return;}
         if(name=="l" || name=="L") {action(Action::LoadRecording);return;}
+        if(name=="i" || name=="I") {action(Action::LoadFinInspection);return;}
         if(name=="m" || name=="M") {
             action(shift?Action::ImportStl:Action::ImportObj);return;
         }
@@ -1242,6 +1282,13 @@ void App::click(int x,int y) {
                                     Action::CalibrateRecording):Action::Garage);
         return;
     }
+    if(page_==Page::Garage && selectedPart_==2 &&
+       !finInspection_.fins.empty() && x>=workbench::viewX &&
+       x<workbench::inspectorX && y>=workbench::analysisY &&
+       y<workbench::statusY) {
+        focusRegion_=4; // read-only fin table, not the flight timeline
+        return;
+    }
     if(x>=314 && x<=919 && y>=604 && y<=660) {
         const double fraction=std::clamp((x-314)/605.0,0.0,1.0);
         if(page_==Page::Ground && !recording_.samples.empty()) {
@@ -1283,6 +1330,7 @@ void App::demoAt(double seconds) {
         demoStage_=stage;
         rocket_=Rocket{};
         reference_=ReferenceMesh{};
+        finInspection_=FinInspection{};
         if(stage>=1) {rocket_.material=Material::CarbonLaminate;rocket_.bodyDensity=1500;}
         if(stage>=2) {rocket_.noseProfile=NoseProfile::TangentOgive;rocket_.noseLength=0.115;}
         if(stage>=3) {

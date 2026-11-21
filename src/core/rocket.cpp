@@ -11,6 +11,9 @@
 namespace eulo {
 namespace {
 constexpr double pi = 3.14159265358979323846;
+// Inspector section offsets; sum = 52 editable model fields. These origins
+// describe *inputs*, never a physical measurement or a validated model.
+constexpr int inputOffsets[]={0,6,11,20,22,28,32,39,47,52};
 struct Part { double mass, x, intrinsicI; };
 struct ScalarField { const char* key; double Rocket::*member; };
 constexpr ScalarField scalars[] = {
@@ -51,8 +54,9 @@ constexpr const char* integers[] = {
     "motorIndex","insertEnabled","insertMaterial","referenceFormat"
 };
 
-bool readEul(FILE* file,Rocket& candidate,bool version2) {
+bool readEul(FILE* file,Rocket& candidate,int schema) {
     bool seen[std::size(scalars)+std::size(integers)] = {};
+    bool seenOrigins=false;
     int values[std::size(integers)] = {};
     char line[256];
     while (std::fgets(line,sizeof(line),file)) {
@@ -66,6 +70,17 @@ bool readEul(FILE* file,Rocket& candidate,bool version2) {
         if(!equal || equal==line || std::strchr(equal+1,'='))return false;
         *equal='\0';
         const char* text=equal+1;
+        if(std::strcmp(line,"inputOrigins")==0) {
+            if(schema!=3 || seenOrigins || std::strlen(text)!=Rocket::inputCount)
+                return false;
+            for(int i=0;i<Rocket::inputCount;++i) {
+                if(text[i]<'0' || text[i]>'2')return false;
+                candidate.inputOrigins[static_cast<size_t>(i)]=
+                    static_cast<InputOrigin>(text[i]-'0');
+            }
+            seenOrigins=true;
+            continue;
+        }
         bool found=false;
         for(size_t i=0;i<std::size(scalars);++i) {
             if(std::strcmp(line,scalars[i].key)!=0)continue;
@@ -88,11 +103,11 @@ bool readEul(FILE* file,Rocket& candidate,bool version2) {
         }
         if(!found)return false;
     }
-    if(std::ferror(file))return false;
+    if(std::ferror(file) || (schema==3 && !seenOrigins))return false;
     for(size_t i=0;i<std::size(scalars);++i)
-        if(!seen[i] && (version2 || i<std::size(scalars)-4))return false;
+        if(!seen[i] && (schema>=2 || i<std::size(scalars)-4))return false;
     for(size_t i=0;i<std::size(integers);++i)
-        if(!seen[std::size(scalars)+i] && (version2 || i<std::size(integers)-1))return false;
+        if(!seen[std::size(scalars)+i] && (schema>=2 || i<std::size(integers)-1))return false;
     if(values[6]!=0 && values[6]!=1)return false;
     candidate.material=static_cast<Material>(values[0]);
     candidate.noseProfile=static_cast<NoseProfile>(values[1]);
@@ -143,7 +158,23 @@ double illustrativeFinDensity(FinMaterial material) {
     return 0.0;
 }
 
+InputOrigin Rocket::origin(int part,int field) const {
+    if(part<0 || part>=static_cast<int>(std::size(inputOffsets))-1 ||
+       field<0 || field>=inputOffsets[part+1]-inputOffsets[part])
+        return InputOrigin::LegacyUnknown;
+    return inputOrigins[static_cast<size_t>(inputOffsets[part]+field)];
+}
+bool Rocket::markOrigin(int part,int field,InputOrigin source) {
+    if(part<0 || part>=static_cast<int>(std::size(inputOffsets))-1 ||
+       field<0 || field>=inputOffsets[part+1]-inputOffsets[part] ||
+       static_cast<int>(source)>2)return false;
+    inputOrigins[static_cast<size_t>(inputOffsets[part]+field)]=source;
+    return true;
+}
+
 bool Rocket::valid() const {
+    for(InputOrigin source:inputOrigins)
+        if(static_cast<int>(source)>2)return false;
     return std::isfinite(bodyLength) && bodyLength >= 0.2 && bodyLength <= 3.0 &&
            std::isfinite(radius) && radius >= 0.01 && radius <= 0.1 &&
            std::isfinite(wall) && wall >= 0.0004 && wall < radius * 0.5 &&
@@ -295,7 +326,7 @@ bool saveProject(const Rocket& r, const char* path) {
     const std::string temporary = std::string(path) + ".tmp";
     FILE* f = std::fopen(temporary.c_str(),"wb");
     if (!f) return false;
-    bool ok=std::fputs("EULOLAB/2\n",f)>=0;
+    bool ok=std::fputs("EULOLAB/3\n",f)>=0;
     for(const ScalarField& field:scalars)
         if(ok)ok=std::fprintf(f,"%s=%.17g\n",field.key,r.*(field.member))>0;
     const int values[]={static_cast<int>(r.material),static_cast<int>(r.noseProfile),
@@ -305,6 +336,10 @@ bool saveProject(const Rocket& r, const char* path) {
     static_assert(std::size(values)==std::size(integers));
     for(size_t i=0;i<std::size(integers);++i)
         if(ok)ok=std::fprintf(f,"%s=%d\n",integers[i],values[i])>0;
+    if(ok)ok=std::fputs("inputOrigins=",f)>=0;
+    for(InputOrigin source:r.inputOrigins)
+        if(ok)ok=std::fputc('0'+static_cast<int>(source),f)!=EOF;
+    if(ok)ok=std::fputc('\n',f)!=EOF;
     const bool closed = std::fclose(f) == 0;
     if (!ok || !closed || std::rename(temporary.c_str(), path) != 0) {
         std::remove(temporary.c_str());
@@ -322,8 +357,10 @@ bool loadProject(Rocket& rocket, const char* path) {
     int material=-1, profile=-1, noseMaterial=-1, finMaterial=-1;
     bool ok = std::fgets(header,sizeof(header),f) != nullptr;
     if (ok && (std::strcmp(header,"EULOLAB/1\n")==0 ||
-               std::strcmp(header,"EULOLAB/2\n")==0)) {
-        ok=readEul(f,candidate,std::strcmp(header,"EULOLAB/2\n")==0);
+               std::strcmp(header,"EULOLAB/2\n")==0 ||
+               std::strcmp(header,"EULOLAB/3\n")==0)) {
+        const int schema=header[8]-'0'; // EULOLAB/x
+        ok=readEul(f,candidate,schema);
         material=static_cast<int>(candidate.material);
     } else if (ok && std::strcmp(header,"EULOROCKET3\n")==0) {
         double* values[] = {
@@ -367,6 +404,8 @@ bool loadProject(Rocket& rocket, const char* path) {
         candidate.finTipChord = std::min(candidate.finTipChord,candidate.bodyLength*0.30);
     }
     candidate.material = static_cast<Material>(material);
+    if(std::strcmp(header,"EULOLAB/3\n")!=0)
+        candidate.inputOrigins.fill(InputOrigin::LegacyUnknown);
     const int trailing = ok ? std::fgetc(f) : EOF;
     // Whitespace after the final value is allowed; further data is not.
     if (ok && trailing != EOF) {

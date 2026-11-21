@@ -74,6 +74,11 @@ PAGE = b'''<!doctype html>
     <small>Copied to this sandbox for offline playback; not a live device.</small>
   </div>
   <div class="import">
+    <label for="fins">Import operator fin readings:</label>
+    <input id="fins" type="file" accept=".csv,text/csv" aria-label="Import fin inspection CSV">
+    <small>Separate from design and flight model; not hardware-verified.</small>
+  </div>
+  <div class="import">
     <label for="mesh">Import visual reference:</label>
     <input id="mesh" type="file" accept=".obj,.stl" aria-label="Import OBJ or STL reference">
     <button id="download" type="button">Download visual OBJ</button>
@@ -86,6 +91,7 @@ PAGE = b'''<!doctype html>
   const canvas = document.getElementById('workbench');
   const focus = document.getElementById('focus');
   const recording = document.getElementById('recording');
+  const fins = document.getElementById('fins');
   const mesh = document.getElementById('mesh');
   const download = document.getElementById('download');
   const status = document.getElementById('previewStatus');
@@ -183,6 +189,26 @@ PAGE = b'''<!doctype html>
     } catch (err) {
       status.textContent = 'CSV upload failed; check the format and size.';
       console.warn('Recording upload failed', err);
+    }
+  });
+  fins.addEventListener('change', async () => {
+    const file = fins.files && fins.files[0];
+    if (!file) return;
+    if (file.size > 8192) {
+      status.textContent = 'Fin inspection exceeds the 8 KiB limit.';
+      return;
+    }
+    try {
+      await pending;
+      const response = await fetch('/fins', {method: 'POST',
+        headers: {'Content-Type': 'text/csv'}, body: file});
+      if (!response.ok) throw new Error('Fin inspection rejected');
+      await send({type: 'key', name: 'i', ctrl: true, shift: false});
+      status.textContent = 'Native fin parser checked the operator log; see Design > Fin set.';
+      canvas.focus();
+    } catch (err) {
+      status.textContent = 'Fin inspection rejected; check schema and actual readings.';
+      console.warn('Fin inspection upload failed', err);
     }
   });
   mesh.addEventListener('change', async () => {
@@ -472,6 +498,36 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, subprocess.TimeoutExpired, UnicodeDecodeError,
                     BrokenPipeError, OSError):
                 self.respond(400, b'invalid recorded CSV\n', 'text/plain; charset=utf-8')
+                return
+            self.respond(204, b'', 'text/plain; charset=utf-8')
+            return
+        if self.path == '/fins':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 100 <= length <= 8192 or self.headers.get('Content-Type') != 'text/csv':
+                    raise ValueError('Fin log size or media type')
+                body = self.rfile.read(length)
+                if (len(body) != length or b'\x00' in body or not
+                        body.startswith((b'EULOFINS/1\n', b'EULOFINS/1\r\n'))):
+                    raise ValueError('Fin log header or binary content')
+                body.decode('ascii')
+                destination = ROOT / 'out' / 'fin-inspection.csv'
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                temporary = destination.with_suffix('.csv.upload')
+                with self.native.lock:
+                    try:
+                        temporary.write_bytes(body)
+                        check = subprocess.run([str(ROOT / 'out/eulolab-host'),
+                                                '--check-fins', str(temporary)],
+                                               cwd=ROOT, timeout=5, capture_output=True)
+                        if check.returncode != 0:
+                            raise ValueError('Native fin parser rejected operator log')
+                        os.replace(temporary, destination)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+            except (ValueError, subprocess.TimeoutExpired, UnicodeDecodeError,
+                    BrokenPipeError, OSError):
+                self.respond(400, b'invalid fin-inspection CSV\n', 'text/plain; charset=utf-8')
                 return
             self.respond(204, b'', 'text/plain; charset=utf-8')
             return

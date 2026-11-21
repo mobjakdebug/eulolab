@@ -19,6 +19,11 @@ int main(int argc, char** argv) {
         std::string error;
         return recording.load(argv[2],error)?0:4;
     }
+    if(argc==3 && std::strcmp(argv[1],"--check-fins")==0) {
+        eulo::FinInspection inspection;
+        std::string error;
+        return inspection.load(argv[2],error)?0:4;
+    }
     eulo::App app;
     if(!app.init("assets/font-atlas.bin","assets/motors","out/project.eul")) {
         std::fprintf(stderr,"Cannot load font atlas or commercial .eng curves\n");return 1;
@@ -105,6 +110,6 @@ int main(int argc, char** argv) {
             width,height);
         return 0;
     }
-    std::fprintf(stderr,"Usage: %s --interactive | --stats | --screenshot OUTPUT.ppm [demo_second] | --demo-raw [fps] [seconds] | --demo-times\n",argv[0]);
+    std::fprintf(stderr,"Usage: %s --interactive | --stats | --screenshot OUTPUT.ppm [demo_second] | --check-recording/--check-fins/--check-mesh FILE | --demo-raw [fps] [seconds] | --demo-times\n",argv[0]);
     return 2;
 }

@@ -2,6 +2,7 @@
 #include "core/motor.hpp"
 #include "core/flight.hpp"
 #include "core/telemetry.hpp"
+#include "core/fin_inspection.hpp"
 #include "core/mesh.hpp"
 #include "core/bench_wire.hpp"
 #include <algorithm>
@@ -211,11 +212,63 @@ void testSensorTelemetry() {
     std::remove(path);
     std::puts("PASS sensor CSV: raw pressure/IMU, relative baro altitude, gaps and fail-closed import");
 }
+void testFinInspection() {
+    const char* path="out/fin-inspection-test.csv"; // test-only operator fixture
+    constexpr const char* prefix="EULOFINS/1\nobserved_utc=2026-11-20T10:20:30Z\n"
+        "operator=Test-only fixture\ninstrument=Test caliper and angle reference\n"
+        "fin_count=3\n"
+        "fin_number,span_mm,root_chord_mm,tip_chord_mm,sweep_mm,thickness_mm,root_setback_mm,cant_deg,azimuth_deg\n";
+    FILE* file=std::fopen(path,"wb");
+    assert(file && std::fputs(prefix,file)>0 &&
+           std::fputs("1,48,95,52,24,2.5,6.0,-0.2,0.0\n"
+                      "2,49,96,52,24,2.6,6.2,0.3,120.0\n"
+                      "3,47,95,51,23,2.4,5.8,-0.1,240.0\n",file)>0 && std::fclose(file)==0);
+    FinInspection fin;
+    std::string error;
+    assert(fin.load(path,error) && fin.fins.size()==3 &&
+           fin.operatorName=="Test-only fixture" && near(fin.maxAbsCant(),.3));
+    double low=0,high=0;
+    assert(fin.rangeForField(1,low,high) && near(low,47) && near(high,49));
+    assert(fin.rangeForField(2,low,high) && near(low,95) && near(high,96));
+    assert(fin.rangeForField(6,low,high) && near(low,5.8) && near(high,6.2));
+    assert(fin.valueForField(1,1,low) && near(low,49));
+    assert(!fin.valueForField(1,3,low) && !fin.rangeForField(0,low,high));
+    for(const char* bad : {
+            "2,48,95,52,24,2.5,6,-0.2,0\n3,49,96,52,24,2.6,6,0.3,120\n4,47,95,51,23,2.4,6,0,240\n",
+            "1,48,95,52,24,2.5,6,0,0\n2,nan,96,52,24,2.6,6,0,120\n3,47,95,51,23,2.4,6,0,240\n",
+            "1,48,95,52,24,2.5,6,0,0\n2,49,96,52,24,2.6,6,0,120\n",
+            "1,48,95,52,24,2.5,6,0,0\n2,49,96,52,24,2.6,6,0,120\n3,47,95,51,23,2.4,6,0,240\nextra\n",
+            "1,48,95,52,24,2.5,6,0,0\n2,49,96,52,24,2.6,6,0,120\n3,47,95,51,23,2.4,6,0,360\n",
+            "1,48,95,52,24,2.5,6,0,0\n2,49,96,52,24,2.6,6,0,120\n3,47,95,51,23,2.4,6,0\n"
+        }) {
+        file=std::fopen(path,"wb");
+        assert(file && std::fputs(prefix,file)>0 && std::fputs(bad,file)>0 &&
+               std::fclose(file)==0);
+        assert(!fin.load(path,error) && fin.fins.size()==3 &&
+               near(fin.maxAbsCant(),.3));
+    }
+    file=std::fopen(path,"wb");
+    assert(file && std::fputs("EULOFINS/1\nobserved_utc=2026-13-20T10:20:30Z\n"
+        "operator=Test only\ninstrument=Gauge\nfin_count=3\n",file)>0 &&
+        std::fclose(file)==0);
+    assert(!fin.load(path,error) && fin.observedUtc=="2026-11-20T10:20:30Z");
+    file=std::fopen(path,"wb");
+    assert(file && std::fputs("EULOFINS/1\nobserved_utc=2026-11-20T10:20:30Z\n"
+        "operator=Test only\ninstrument=Test angle gauge\nfin_count=8\n"
+        "fin_number,span_mm,root_chord_mm,tip_chord_mm,sweep_mm,thickness_mm,root_setback_mm,cant_deg,azimuth_deg\n",file)>0);
+    for(int i=1;i<=8;++i)
+        assert(std::fprintf(file,"%d,%d,95,52,24,2.5,6,0,%d\n",i,47+i,(i-1)*45)>0);
+    assert(std::fclose(file)==0 && fin.load(path,error) && fin.fins.size()==8 &&
+           fin.valueForField(1,7,low) && near(low,55));
+    std::remove(path);
+    std::puts("PASS fin inspection: only attributed operator readings, per-field range, transactional errors");
+}
 int main() {
     testBenchWire();
     testMeshes();
     testTelemetry();
     testSensorTelemetry();
+    testFinInspection();
     auto motor = from("; test\nDUMMY 18 70 P .01 .02 TEST\n1 10\n2 0\n;");
     assert(motor.points.size() == 3 && motor.points[0].time == 0);
     assert(near(motor.thrust(0.5), 5) && near(motor.thrust(1.5), 5));
@@ -299,13 +352,18 @@ int main() {
         expected.referenceFormat=2;expected.referenceUnitMm=2.5;
         expected.referenceEastMm=12;expected.referenceTailMm=18;
         expected.referenceNorthMm=-9;
+        assert(expected.markOrigin(2,1,InputOrigin::UserDesign) &&
+               expected.markOrigin(4,0,InputOrigin::LegacyUnknown));
         assert(expected.valid() && saveProject(expected,"out/roundtrip.eul"));
         FILE* text=std::fopen("out/roundtrip.eul","rb");
         char magic[32]={};
         assert(text && std::fgets(magic,sizeof(magic),text) &&
-               std::string(magic)=="EULOLAB/2\n" && std::fclose(text)==0);
+               std::string(magic)=="EULOLAB/3\n" && std::fclose(text)==0);
         Rocket actual;
         assert(loadProject(actual,"out/roundtrip.eul"));
+        assert(actual.origin(2,1)==InputOrigin::UserDesign &&
+               actual.origin(4,0)==InputOrigin::LegacyUnknown &&
+               actual.origin(1,0)==InputOrigin::Template);
         const double lhs[]={expected.bodyLength,expected.radius,expected.wall,
             expected.bodyDensity,expected.airframeCd,expected.noseLength,
             expected.noseWall,expected.noseDensity,expected.finSpan,
@@ -361,13 +419,40 @@ int main() {
         assert(current && older && std::fgets(line,sizeof(line),current));
         assert(std::fputs("EULOLAB/1\n",older)>0);
         while(std::fgets(line,sizeof(line),current))
-            if(std::strncmp(line,"reference",9)!=0)assert(std::fputs(line,older)>0);
+            if(std::strncmp(line,"reference",9)!=0 &&
+               std::strncmp(line,"inputOrigins=",13)!=0)
+                assert(std::fputs(line,older)>0);
         assert(std::fclose(current)==0 && std::fclose(older)==0);
         Rocket migrated;
         assert(loadProject(migrated,"out/schema1.eul") &&
                near(migrated.launchTiltDeg,6) && near(migrated.windEast,-3) &&
-               migrated.referenceFormat==0 && near(migrated.referenceUnitMm,1));
+               migrated.referenceFormat==0 && near(migrated.referenceUnitMm,1) &&
+               migrated.origin(0,0)==InputOrigin::LegacyUnknown);
+        // An old /2 project likewise has unknown provenance, not a template
+        // or a purported measured geometry.
+        current=std::fopen("out/schema2.eul","rb");
+        FILE* previous=std::fopen("out/old-schema2.eul","wb");
+        assert(current && previous && std::fgets(line,sizeof(line),current));
+        assert(std::fputs("EULOLAB/2\n",previous)>0);
+        while(std::fgets(line,sizeof(line),current))
+            if(std::strncmp(line,"inputOrigins=",13)!=0)
+                assert(std::fputs(line,previous)>0);
+        assert(std::fclose(current)==0 && std::fclose(previous)==0);
+        assert(loadProject(migrated,"out/old-schema2.eul") &&
+               migrated.origin(2,1)==InputOrigin::LegacyUnknown);
+        // A v3 project may not silently drop or forge origin markers.
+        current=std::fopen("out/schema2.eul","rb");
+        FILE* invalid=std::fopen("out/invalid-origin.eul","wb");
+        assert(current && invalid && std::fgets(line,sizeof(line),current));
+        assert(std::fputs("EULOLAB/3\n",invalid)>0);
+        while(std::fgets(line,sizeof(line),current))
+            if(std::strncmp(line,"inputOrigins=",13)!=0)
+                assert(std::fputs(line,invalid)>0);
+        assert(std::fclose(current)==0 && std::fclose(invalid)==0);
+        assert(!loadProject(migrated,"out/invalid-origin.eul") &&
+               migrated.origin(2,1)==InputOrigin::LegacyUnknown);
         std::remove("out/schema2.eul");std::remove("out/schema1.eul");
+        std::remove("out/old-schema2.eul");std::remove("out/invalid-origin.eul");
     }
     {
         FILE* legacy2=std::fopen("out/legacy2.ini","wb");

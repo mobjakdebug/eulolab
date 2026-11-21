@@ -2,6 +2,7 @@
 #include "canvas.hpp"
 #include "core/bench_link.hpp"
 #include "core/flight.hpp"
+#include "core/fin_inspection.hpp"
 #include "core/telemetry.hpp"
 #include "rocket_view.hpp"
 #include <string>
@@ -14,7 +15,7 @@ enum class Action {
     Menu, Confirm, Undo, ResetPart, JumpApogee, FitView,
     HelpControls, HelpModel, FocusNext, FocusPrevious,
     SideView, TopView, IsoView, CycleView, LoadRecording, CalibrateRecording,
-    ImportObj, ImportStl, ExportObj,
+    ImportObj, ImportStl, ExportObj, LoadFinInspection,
     Bench, BenchConnect, BenchDisconnect, BenchAxisPrev, BenchAxisNext,
     BenchPulseMinus, BenchPulsePlus, BenchNeutral,
     BenchSetup, BenchProfileSave, BenchApplyPins
@@ -37,8 +38,10 @@ public:
     const Rocket& rocket() const { return rocket_; }
     const FlightResult& flight() const { return flight_; }
     const TelemetryRecording& recording() const { return recording_; }
+    const FinInspection& finInspection() const { return finInspection_; }
     const ReferenceMesh& referenceMesh() const { return reference_; }
     bool importTelemetry(const char* path);
+    bool importFinInspection(const char* path);
     bool importReference(int format);
     Page page() const { return page_; }
     int selectedPart() const { return selectedPart_; }
@@ -73,6 +76,7 @@ private:
     const MotorCurve& motor() const { return motors_[rocket_.motorIndex]; }
     FlightResult flight_;
     TelemetryRecording recording_;
+    FinInspection finInspection_;
     ReferenceMesh reference_;
     Page page_ = Page::Garage;
     int selectedPart_ = 0, selectedField_ = 0;
@@ -102,6 +106,7 @@ private:
     int demoStage_ = -1;
     std::string projectPath_;
     std::string recordingPath_;
+    std::string finInspectionPath_;
     std::string benchProfilePath_;
     std::string status_ = "Select a component and edit its dimensions.";
     std::string usbStatus_ = "USB not yet scanned";

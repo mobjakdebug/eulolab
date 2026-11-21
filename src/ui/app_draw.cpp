@@ -163,7 +163,7 @@ void App::drawTree(Canvas& c) const {
         return;
     }
     c.text(16,111,"Assembly",ink,1);
-    c.text(17,144,"7 parts + setup + mesh",muted,0,210);
+    c.text(17,144,"Design / not measured",muted,0,210);
     c.rect(15,163,treeW-31,1,rule);
     for(int i=0;i<9;++i) {
         const int y=treeRowY+i*treeRowH;
@@ -180,13 +180,24 @@ void App::drawTree(Canvas& c) const {
     }
     if(focusRegion_==2 && !menuOpen_ && !helpMode_)
         c.border(7,treeRowY+selectedPart_*treeRowH+3,treeW-16,treeRowH-6,accent,2);
-    const MassProperties mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
-    c.text(16,500,"Estimated mass / CG",ink);
-    c.rect(16,526,treeW-32,1,rule);
-    thinRow(c,7,532,treeW-14,"Loaded",formatted(mass.loaded*1000,1,"g"));
-    thinRow(c,7,568,treeW-14,"Dry",formatted(mass.dry*1000,1,"g"));
-    thinRow(c,7,604,treeW-14,"CG / tail",formatted(mass.cgFromTail*1000,0,"mm"));
-    c.text(16,646,"Assumed / not weighed",muted,0,treeW-30);
+    if(selectedPart_==2 && !finInspection_.fins.empty()) {
+        c.text(16,500,"Fin log / unverified",ink,0,treeW-30);
+        c.rect(16,526,treeW-32,1,rule);
+        c.text(16,539,finInspection_.observedUtc,muted,0,treeW-30);
+        c.text(16,571,"By "+finInspection_.operatorName,muted,0,treeW-30);
+        c.text(16,603,"Tool "+finInspection_.instrument,muted,0,treeW-30);
+        c.text(16,646,finInspection_.fins.size()==
+            static_cast<size_t>(rocket_.finCount)?"Not an inspection pass":
+            "Design fin count differs",accent,0,treeW-30);
+    } else {
+        const MassProperties mass=massProperties(rocket_,motor().loadedKg,motor().propellantKg);
+        c.text(16,500,"Estimated mass / CG",ink);
+        c.rect(16,526,treeW-32,1,rule);
+        thinRow(c,7,532,treeW-14,"Loaded",formatted(mass.loaded*1000,1,"g"));
+        thinRow(c,7,568,treeW-14,"Dry",formatted(mass.dry*1000,1,"g"));
+        thinRow(c,7,604,treeW-14,"CG / tail",formatted(mass.cgFromTail*1000,0,"mm"));
+        c.text(16,646,"Assumed / not weighed",muted,0,treeW-30);
+    }
 }
 
 void App::drawInspector(Canvas& c) const {
@@ -251,8 +262,11 @@ void App::drawInspector(Canvas& c) const {
         return;
     }
     if(page_==Page::Garage) {
-        c.text(inspectorX+16,148,std::string("0")+std::to_string(selectedPart_+1)+
-               " / "+partNames[selectedPart_]+" / design inputs",muted,0,288);
+        const auto source=rocket_.origin(selectedPart_,selectedField_);
+        const char* sourceLabel=source==InputOrigin::Template?"TEMPLATE DESIGN":
+            source==InputOrigin::UserDesign?"USER DESIGN":"OLD / UNKNOWN DESIGN";
+        c.text(inspectorX+16,148,std::string(sourceLabel)+" / "+
+            partNames[selectedPart_],muted,0,288);
         c.rect(inspectorX+16,171,288,1,rule);
         for(int i=0;i<fieldCount(selectedPart_);++i) {
             const int y=fieldY+i*fieldH;
@@ -285,15 +299,37 @@ void App::drawInspector(Canvas& c) const {
             {"Nose shell / profile","Profile affects shape and mass."},
             {"Planform / placement","Fins must fit inside the tube."},
             {"Avionics / point mass","Location shifts center of mass."},
-            {"Motor / internal sleeve","Thrust data is read-only."},
+            {"Motor / internal sleeve","Klima curve: published, not fired."},
             {"Idealised deployment","0 mm switches canopy off."},
             {"Coaxial cylinder or tube","Enabled insert adds model mass."},
             {"Open-loop scenario","Illustrative CP and fin forces."},
             {"Visual comparison only","OBJ/STL is not mass or CAD solid."}
         };
-        const int noteY=std::max(566,fieldY+fieldH*fieldCount(selectedPart_)+8);
-        c.text(inspectorX+16,noteY,descriptions[selectedPart_][0],ink);
-        c.text(inspectorX+16,noteY+24,descriptions[selectedPart_][1],muted,0,286);
+        const int noteY=std::max(531,fieldY+fieldH*fieldCount(selectedPart_)+8);
+        if(selectedPart_==2) {
+            if(finInspection_.fins.empty()) {
+                c.text(inspectorX+16,noteY,"No fin inspection imported",ink);
+                c.text(inspectorX+16,noteY+24,"File > Load fin inspection",muted);
+                c.text(inspectorX+16,noteY+47,"Model fins are not measured",muted);
+            } else {
+                c.text(inspectorX+16,noteY,
+                       std::to_string(finInspection_.fins.size())+
+                       " fins / operator log",ink,0,286);
+                double low=0,high=0;
+                if(finInspection_.rangeForField(selectedField_,low,high))
+                    c.text(inspectorX+16,noteY+24,
+                        "Logged "+std::string(field(2,selectedField_).name)+": "+
+                        formatted(low,1)+".."+formatted(high,1,"mm"),muted,0,286);
+                else c.text(inspectorX+16,noteY+24,
+                            "No logged match for selected field",muted,0,286);
+                c.text(inspectorX+16,noteY+47,
+                    "Max |cant| "+formatted(finInspection_.maxAbsCant(),1,"deg")+
+                    " / no pass",muted,0,286);
+            }
+        } else {
+            c.text(inspectorX+16,noteY,descriptions[selectedPart_][0],ink);
+            c.text(inspectorX+16,noteY+24,descriptions[selectedPart_][1],muted,0,286);
+        }
         if(selectedPart_==4) {
             c.text(inspectorX+16,noteY+47,
                 formatted(motor().totalImpulse(),1,"N*s")+"  /  "+
@@ -487,6 +523,28 @@ void App::drawAnalysis(Canvas& c) const {
         if(focusRegion_==4)c.border(x0-4,y1-5,x1-x0+8,y0-y1+12,accent);
         return;
     }
+    if(page_==Page::Garage && selectedPart_==2 && !finInspection_.fins.empty()) {
+        const Field f=field(2,selectedField_);
+        double ignored=0;
+        const bool comparable=finInspection_.valueForField(selectedField_,0,ignored);
+        c.text(viewX+16,analysisY+5,"FIN LOG / mm / cant deg / az deg",ink,0,305);
+        c.text(viewX+327,analysisY+5,comparable?
+            "Design "+std::string(f.name)+": "+formatted(f.value,1,"mm"):
+            "Selected design field has no logged value",muted,0,369);
+        for(size_t i=0;i<finInspection_.fins.size();++i) {
+            const FinReading& fin=finInspection_.fins[i];
+            double value=0;
+            const bool hasValue=finInspection_.valueForField(selectedField_,i,value);
+            const std::string row="Fin "+std::to_string(fin.number)+"  "+
+                (hasValue?formatted(value,1,"mm"):"--")+
+                " / "+formatted(fin.cantDeg,1,"deg")+
+                " / "+formatted(fin.azimuthDeg,1,"deg");
+            c.text(viewX+16+static_cast<int>(i/4)*352,
+                   analysisY+30+static_cast<int>(i%4)*22,row,muted,0,336);
+        }
+        if(focusRegion_==4)c.border(viewX+7,analysisY+4,viewW-14,analysisH-8,accent);
+        return;
+    }
     c.text(viewX+16,analysisY+5,"Trajectory",ink);
     c.text(viewX+107,analysisY+5,"/ altitude (blue)  ground range (grey)",muted);
     if(!flight_.valid || flight_.samples.empty()) {
@@ -540,6 +598,8 @@ void App::drawStatus(Canvas& c) const {
     c.text(31,statusY+6,status_,ink,0,615);
     c.text(697,statusY+6,page_==Page::Ground?"USER CSV / DEVICE UNVERIFIED":
            page_==Page::Bench?"USB BENCH / NOT FLIGHT":
+           page_==Page::Garage && selectedPart_==2 &&
+               !finInspection_.fins.empty()?"MODEL + USER FIN LOG / UNVERIFIED":
            "MODEL ONLY / NOT FLIGHT-RATED",muted);
     const std::string label=demoMode_?"HOST REPLAY / NOT PS4":runtimeLabel_;
     rightText(c,1262,statusY+6,label,muted);
@@ -576,7 +636,7 @@ void App::drawHelp(Canvas& c) const {
         "Click a part, then a value to type. Enter applies; Esc cancels.",
         "Use +/- to step; drag to orbit, wheel to zoom; SIDE/TOP/ISO.",
         "Tab cycles focus; arrows navigate; Alt opens the menu.",
-        "Ctrl+S saves; Ctrl+O opens; Ctrl+N resets; Ctrl+Z undoes.",
+        "Ctrl+S/O/N/Z: save/open/new/undo. Ctrl+L: CSV; Ctrl+I: fins.",
         "CONTROLLER  /  ORBIS BUILD",
         "L1/R1: part   |   L2/R2: focus   |   D-pad: select/step",
         "X: confirm/step | O: back | Square: save or neutral",
@@ -586,7 +646,7 @@ void App::drawHelp(Canvas& c) const {
         "ILLUSTRATIVE 3D / OPEN-LOOP RIGID BODY",
         "Published Klima C6/D9 curves are read-only motor data.",
         "Wind, rail tilt and gimbal are scenario assumptions.",
-        "Fin slope, CP and damping are not measured coefficients.",
+        "Fin slope/CP/damping assumed; operator fin log unverified.",
         "Flight model cannot control the USB actuator bench.",
         "Canopy drag starts ideally at descent without delay.",
         "Bench USB sends manual pulses only; no live sensor data.",

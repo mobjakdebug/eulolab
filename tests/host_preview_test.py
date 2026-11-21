@@ -129,6 +129,51 @@ class HostPreviewTest(unittest.TestCase):
             else:
                 file.write_bytes(previous)
 
+    def test_fin_inspection_upload_goes_through_native_parser(self):
+        path = Path(__file__).resolve().parents[1] / 'out/fin-inspection.csv'
+        previous = path.read_bytes() if path.exists() else None
+        native = Native()
+        Handler.native = native
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        address = f'http://127.0.0.1:{server.server_port}'
+        try:
+            before = urllib.request.urlopen(address + '/frame').read()
+            measured_by_test = (
+                'EULOFINS/1\nobserved_utc=2026-11-20T10:20:30Z\n'
+                'operator=Test only\ninstrument=Test fixture\nfin_count=3\n'
+                'fin_number,span_mm,root_chord_mm,tip_chord_mm,sweep_mm,thickness_mm,root_setback_mm,cant_deg,azimuth_deg\n'
+                '1,48,95,52,24,2.5,6,-0.2,0\n2,49,96,52,24,2.5,6.2,0.3,120\n'
+                '3,47,94,51,23,2.4,5.8,0,240\n'
+            ).encode('ascii')
+            request = urllib.request.Request(address + '/fins', data=measured_by_test,
+                    headers={'Content-Type': 'text/csv'})
+            self.assertEqual(urllib.request.urlopen(request).status, 204)
+            self.assertEqual(path.read_bytes(), measured_by_test)
+            load = urllib.request.Request(address + '/input',
+                data=json.dumps({'type': 'key', 'name': 'i', 'ctrl': True,
+                                 'shift': False}).encode(),
+                headers={'Content-Type': 'application/json'})
+            self.assertEqual(urllib.request.urlopen(load).status, 204)
+            self.assertNotEqual(before, urllib.request.urlopen(address + '/frame').read())
+            bad = urllib.request.Request(address + '/fins',
+                    data=measured_by_test.replace(b'fin_count=3', b'fin_count=8'),
+                    headers={'Content-Type': 'text/csv'})
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(bad)
+            self.assertEqual(caught.exception.code, 400)
+            self.assertEqual(path.read_bytes(), measured_by_test)
+        finally:
+            server.shutdown()
+            thread.join(timeout=4)
+            server.server_close()
+            native.close()
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(previous)
+
     def test_visual_mesh_upload_and_export(self):
         root = Path(__file__).resolve().parents[1] / 'out'
         paths = (root / 'reference.obj', root / 'assembly.obj')
