@@ -1,0 +1,9 @@
+# Compile-only test fixture. 0xffff IDs are reserved, not a flashable USB identity.
+# GPIO choices here are for compilation; review your board before using real pins.
+CONFIG_EULO_BENCH_USB_VID=0xffff
+CONFIG_EULO_BENCH_USB_PID=0xffff
+CONFIG_EULO_BENCH_GATE_PIN=8
+CONFIG_EULO_BENCH_SERVO0_PIN=4
+CONFIG_EULO_BENCH_SERVO1_PIN=5
+CONFIG_EULO_BENCH_SERVO2_PIN=6
+CONFIG_EULO_BENCH_SERVO3_PIN=7

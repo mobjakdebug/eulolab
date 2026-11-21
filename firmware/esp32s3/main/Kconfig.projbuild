@@ -1,0 +1,59 @@
+menu "EuloBench USB / bench-only servo wiring"
+    config EULO_BENCH_USB_VID
+        hex "Authorized USB vendor ID of the actual board"
+        range 0x0000 0xffff
+        default 0x0000
+        help
+            Zero blocks compilation. Do not use an unassigned or borrowed USB ID.
+
+    config EULO_BENCH_USB_PID
+        hex "Authorized USB product ID for this custom vendor interface"
+        range 0x0000 0xffff
+        default 0x0000
+        help
+            Zero blocks compilation. Must match the PS4 build profile.
+
+    config EULO_BENCH_GATE_PIN
+        int "Input GPIO for physical bench-enable jumper (pulled down)"
+        range -1 48
+        default -1
+        help
+            HIGH permits a pulse; LOW removes the session and commands neutral.
+            An independent physical servo-power cutoff is still required.
+
+    config EULO_BENCH_SERVO0_PIN
+        int "PWM signal GPIO, TVC pitch"
+        range -1 48
+        default -1
+    config EULO_BENCH_SERVO1_PIN
+        int "PWM signal GPIO, TVC yaw"
+        range -1 48
+        default -1
+    config EULO_BENCH_SERVO2_PIN
+        int "PWM signal GPIO, fin A"
+        range -1 48
+        default -1
+    config EULO_BENCH_SERVO3_PIN
+        int "PWM signal GPIO, fin B"
+        range -1 48
+        default -1
+
+    # These optional outputs are firmware-provisioned and start at neutral.
+    # The app may remap four logical channels only within this reviewed pool.
+    config EULO_BENCH_SPARE0_PIN
+        int "Optional allowed PWM GPIO 5 (-1 to disable)"
+        range -1 48
+        default -1
+    config EULO_BENCH_SPARE1_PIN
+        int "Optional allowed PWM GPIO 6 (-1 to disable)"
+        range -1 48
+        default -1
+    config EULO_BENCH_SPARE2_PIN
+        int "Optional allowed PWM GPIO 7 (-1 to disable)"
+        range -1 48
+        default -1
+    config EULO_BENCH_SPARE3_PIN
+        int "Optional allowed PWM GPIO 8 (-1 to disable)"
+        range -1 48
+        default -1
+endmenu

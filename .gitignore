@@ -1,0 +1,17 @@
+# Native and host build products
+out/
+*.o
+*.elf
+*.oelf
+*.pkg
+*.gp4
+
+# Local Python / editor state
+__pycache__/
+.venv/
+*.pyc
+.DS_Store
+
+# Temporary video frames; the requested finished MP4 is deliberately tracked.
+video/*.ppm
+video/*.png

@@ -1,0 +1,5 @@
+# Only for rebuilding host-derived preview videos and poster.
+# Not required to build/run the app or its core/HTTP tests.
+Pillow==13.0.0
+numpy==2.4.6
+imageio-ffmpeg==0.8.1
