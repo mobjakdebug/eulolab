@@ -1,0 +1,11 @@
+{
+  "assets": {
+    "docs/teaser-poster.png": "e2fa46032b99a60c383b92068469adc904bf68f1f75359be231cdbca0e51af26",
+    "video/eulolab-host-replay.mp4": "d370b6c98de2f487f7af8470f821096fbbed7881060dfcb2b810b4b0acb62592",
+    "video/eulolab-teaser.mp4": "a7a1f0203bc029b0cffb35714cf99ea8179172b5028336c42af6832e8758f4fe",
+    "video/eulolab-teaser.vtt": "f7cab92087091278f9d134227030c9f4200ec41bed2b3c1fa95d66523bfa4174"
+  },
+  "schema": 1,
+  "source_files": 93,
+  "source_sha256": "49ac759cb04d99b87a2014545d6b5157ba173f4e8aab8968f92e088934a3f7bb"
+}

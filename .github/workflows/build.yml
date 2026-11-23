@@ -1,0 +1,255 @@
+name: Native PS4 and host verification
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build actual shared UI and run core/UI tests
+        run: make -j2 all test
+      - name: Render workbench and modelled descent from the running host app
+        run: |
+          ./out/eulolab-host --screenshot out/assembly.ppm 22
+          ./out/eulolab-host --screenshot out/descent.ppm 65
+          test "$(head -n 1 out/assembly.ppm)" = P6
+          test "$(head -n 1 out/descent.ppm)" = P6
+      - uses: actions/upload-artifact@v7
+        with:
+          name: host-renders-ppm
+          path: out/*.ppm
+          retention-days: 7
+
+  arduino-recorder-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: arduino/setup-arduino-cli@5047b2b7ae5084109726aeb5a7ff627a2019cf1d # v2.1.0
+        with:
+          version: '1.6.0'
+      # Representative compile targets only. Nobody supplied actual board IDs,
+      # pinout, sensor/radio modules or instruments; NEVER flash these builds.
+      # The checked-in hardware_config.h defaults to no sensor/RF operation.
+      - name: Install pinned Arduino cores and sensor/radio libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          esp='https://espressif.github.io/arduino-esp32/package_esp32_index.json'
+          stm='https://github.com/stm32duino/BoardManagerFiles/raw/main/package_stmicroelectronics_index.json'
+          arduino-cli core update-index --additional-urls "$esp" --additional-urls "$stm"
+          arduino-cli core install esp32:esp32@3.3.7 --additional-urls "$esp" --additional-urls "$stm"
+          arduino-cli core install STMicroelectronics:stm32@3.1.0 --additional-urls "$esp" --additional-urls "$stm"
+          arduino-cli lib install 'Adafruit BMP3XX Library@2.1.6'
+          arduino-cli lib install 'Adafruit LSM6DS@4.7.4'
+          arduino-cli lib install 'LoRa@0.8.0'
+      - name: Compile .ino recorder + opt-in TX + receiver, no upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          sketch=firmware/arduino/EuloRecorder
+          flags='-DEULO_BOARD_REVIEWED=1 -DEULO_WIRE_PINS_REVIEWED=1 -DEULO_PRESSURE_ADDRESS=0x77 -DEULO_IMU_ADDRESS=0x6A -DEULO_ALLOW_RF_TX=1 -DEULO_RADIO_FREQUENCY_HZ=868000000L -DEULO_RADIO_SS=5 -DEULO_RADIO_RESET=6 -DEULO_RADIO_DIO0=7 -DEULO_RADIO_TX_POWER_DBM=2'
+          for fqbn in esp32:esp32:esp32s3 STMicroelectronics:stm32:Nucleo_64:pnum=NUCLEO_F401RE; do
+            for mode in 0 1 2; do
+              echo "::notice title=Compile only::FQBN $fqbn, role $mode; no identified hardware or pinout"
+              arduino-cli compile --fqbn "$fqbn" --build-property "compiler.cpp.extra_flags=$flags -DEULO_RADIO_MODE=$mode" "$sketch"
+            done
+          done
+
+  bench-firmware-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      # Deliberately reserved, non-enumerable USB IDs and compile-only GPIOs.
+      # Never publish these binaries or claim board PWM/console compatibility.
+      - name: Compile ESP32-S3 bench reference without flashing hardware
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v5.3.4
+          target: esp32s3
+          path: firmware/esp32s3
+          command: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci" build
+
+  ps4-pkg:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install LLVM 18 cross-compiler and linker
+        run: sudo apt-get update && sudo apt-get install -y clang-18 lld-18
+      - name: Retrieve pinned official OpenOrbis v0.5.4 SDK
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          trap 'code=$?; echo "::error::OpenOrbis download step failed at line ${LINENO}: ${BASH_COMMAND} (exit ${code})"; exit "$code"' ERR
+          url='https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.4/toolchain-llvm-18.tar.gz'
+          curl --show-error -fL --retry 3 --retry-delay 3 "$url" -o "$RUNNER_TEMP/openorbis.tar.gz"
+          echo "3c7cd5bb593ca74fa1c13fd59f3938dc0fc07985167f7275063019e63abe4526  $RUNNER_TEMP/openorbis.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/openorbis"
+          tar -xzf "$RUNNER_TEMP/openorbis.tar.gz" -C "$RUNNER_TEMP/openorbis"
+          sdk_root="$(find "$RUNNER_TEMP/openorbis" -maxdepth 3 -name link.x -print -quit)"
+          test -n "$sdk_root"
+          sdk_root="$(dirname "$sdk_root")"
+          echo "OO_PS4_TOOLCHAIN=$sdk_root" >> "$GITHUB_ENV"
+          ls -ld "$sdk_root/bin/linux" "$sdk_root/lib"
+      # PkgTool.Core is a .NET Core 3 binary. Only its PKG cryptography needs
+      # OpenSSL 1.1; build it in an isolated temporary directory, NOT in /usr.
+      # This is a build-host dependency; it is not bundled inside the PS4 app.
+      - name: Build isolated OpenSSL 1.1 for legacy PkgTool.Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/openssl11-src"
+          url='https://codeload.github.com/openssl/openssl/tar.gz/e04bd3433fd84e1861bf258ea37928d9845e6a86'
+          curl --show-error -fL --retry 3 "$url" -o "$RUNNER_TEMP/openssl11.tar.gz"
+          echo "23c52cc22a7455b7fb260efa0804f4584ebbe08b66da231e22afbb026ea67b7c  $RUNNER_TEMP/openssl11.tar.gz" | sha256sum -c -
+          mkdir -p "$src" "$RUNNER_TEMP/openssl11-lib"
+          tar -xzf "$RUNNER_TEMP/openssl11.tar.gz" -C "$src" --strip-components=1
+          cd "$src"
+          ./config shared no-tests --prefix="$RUNNER_TEMP/openssl11-lib" > "$RUNNER_TEMP/openssl11-config.log" 2>&1
+          if ! make -j2 build_libs > "$RUNNER_TEMP/openssl11-build.log" 2>&1; then
+            tail -n 30 "$RUNNER_TEMP/openssl11-build.log"
+            exit 1
+          fi
+          cp -L libssl.so.1.1 libcrypto.so.1.1 "$RUNNER_TEMP/openssl11-lib/"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/openssl11-lib" >> "$GITHUB_ENV"
+          echo "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1" >> "$GITHUB_ENV"
+      - name: Cross-compile PS4 ELF, create fSELF and package PKG
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! make ps4 2>&1 | tee "$RUNNER_TEMP/ps4-build.log"; then
+            { grep -E '(error:|fatal error:|undefined symbol:|No rule to make target|Error [0-9]|cannot find|OpenSSL|libssl|Exception|Aborted)' "$RUNNER_TEMP/ps4-build.log" || true; } | head -n 10 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            tail -n 22 "$RUNNER_TEMP/ps4-build.log" | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
+      - name: Inspect PKG integrity and record SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd out/ps4/stage
+          pkg='IV0000-BREW00242_00-EULOROCKETLAB001.pkg'
+          test -s "$pkg"
+          sha256sum "$pkg" > package.sha256
+          echo "::notice title=Unverified-on-console PKG SHA256::$(cut -d ' ' -f1 package.sha256)"
+          if ! "$OO_PS4_TOOLCHAIN/bin/linux/PkgTool.Core" pkg_validate "$pkg" > package-validation.txt 2>&1; then
+            echo '::error title=PKG validation::PkgTool.Core exited with an error'
+            tail -n 12 package-validation.txt | while IFS= read -r line; do echo "::error title=PKG validation::$line"; done
+            exit 1
+          fi
+          if grep -q '^\[ERROR\]' package-validation.txt || ! grep -q '^\[OK\]' package-validation.txt; then
+            echo '::error title=PKG validation::No successful checks, or invalid hashes/signatures reported'
+            { grep -E '^\[(ERROR|WARN|OK)\]' package-validation.txt || true; } | tail -n 18 | while IFS= read -r line; do echo "::error title=PKG validation::$line"; done
+            exit 1
+          fi
+          echo "::notice title=PKG validation::LibOrbisPkg reported no invalid hashes or signatures"
+          # Audit the PFS contents and the separately stored sce_sys PKG entries.
+          # This tests the builder's files, not whether a PS4 can run the app.
+          pkgtool="$OO_PS4_TOOLCHAIN/bin/linux/PkgTool.Core"
+          if ! "$pkgtool" pkg_extract "$pkg" "$RUNNER_TEMP/eulolab-extracted" > package-extraction.log 2>&1; then
+            echo '::error title=PKG extraction::PkgTool.Core could not extract the built package'
+            tail -n 18 package-extraction.log | while IFS= read -r line; do echo "::error title=PKG extraction::$line"; done
+            exit 1
+          fi
+          echo '::notice title=PKG extraction::LibOrbisPkg extracted the built inner filesystem'
+          if ! "$pkgtool" pkg_listentries "$pkg" > package-entries.txt 2>&1; then
+            echo '::error title=PKG metadata::Cannot list PKG entries'
+            exit 1
+          fi
+          # LibOrbisPkg moves known direct sce_sys files from PFS to PKG entries.
+          # pkg_listentries prints the zero-based index in column four.
+          sfo_index="$(awk '$NF == "PARAM_SFO" {print $4}' package-entries.txt)"
+          icon_index="$(awk '$NF == "ICON0_PNG" {print $4}' package-entries.txt)"
+          if [[ ! "$sfo_index" =~ ^[0-9]+$ || ! "$icon_index" =~ ^[0-9]+$ ]]; then
+            echo '::error title=PKG metadata::Missing PARAM_SFO or ICON0_PNG entry'
+            tail -n 16 package-entries.txt | while IFS= read -r line; do echo "::error title=PKG entries::$line"; done
+            exit 1
+          fi
+          if ! "$pkgtool" pkg_extractentry "$pkg" "$icon_index" "$RUNNER_TEMP/eulolab-icon0.png" ||
+             ! "$pkgtool" pkg_extractentry "$pkg" "$sfo_index" "$RUNNER_TEMP/eulolab-param.sfo"; then
+            echo '::error title=PKG metadata::Cannot extract icon or param.sfo entry'
+            exit 1
+          fi
+          if ! cmp -s sce_sys/icon0.png "$RUNNER_TEMP/eulolab-icon0.png"; then
+            echo '::error title=PKG metadata::Extracted icon0.png differs from the staged image'
+            exit 1
+          fi
+          # The builder intentionally adds PUBTOOLINFO/PUBTOOLVER to param.sfo,
+          # so validate its parsed identity instead of comparing it bytewise.
+          if ! "$pkgtool" sfo_listentries "$RUNNER_TEMP/eulolab-param.sfo" > package-parameters.txt 2>&1 ||
+             ! grep -Fq 'IV0000-BREW00242_00-EULOROCKETLAB001' package-parameters.txt ||
+             ! grep -Fq 'EuloLab Rocket Studio' package-parameters.txt; then
+            echo '::error title=PKG metadata::Extracted param.sfo has invalid identity'
+            tail -n 16 package-parameters.txt | while IFS= read -r line; do echo "::error title=PKG SFO::$line"; done
+            exit 1
+          fi
+          echo '::notice title=PKG metadata::icon0.png matched and param.sfo identity parsed'
+          python3 - "$RUNNER_TEMP/eulolab-extracted" "$RUNNER_TEMP/eulolab-param.sfo" "$RUNNER_TEMP/eulolab-icon0.png" <<'PY'
+          from pathlib import Path
+          import hashlib
+          import sys
+          import xml.etree.ElementTree as ET
+
+          def fail(message):
+              print(f'::error title=PKG payload audit::{message}', flush=True)
+              raise SystemExit(1)
+
+          stage = Path.cwd()
+          # LibOrbisPkg's pkg_extract preserves its internal /uroot directory.
+          extracted = Path(sys.argv[1]) / 'uroot'
+          entries = [e.get('targ_path') for e in ET.parse(stage / 'pkg.gp4').findall('./files/file')]
+          special = {'sce_sys/param.sfo': Path(sys.argv[2]),
+                     'sce_sys/icon0.png': Path(sys.argv[3])}
+          if not entries or not set(special).issubset(entries):
+              fail('GP4 does not declare the expected application files')
+          pfs_entries = [name for name in entries if name not in special]
+          for name in pfs_entries:
+              try:
+                  source = (stage / name).read_bytes()
+                  actual = (extracted / name).read_bytes()
+              except OSError as error:
+                  fail(f'Cannot read {name}: {error}')
+              if source != actual:
+                  fail(f'PKG payload mismatch: {name}')
+          # LibOrbisPkg creates sce_sys/keystone when assembling app PKGs.
+          found = {str(p.relative_to(extracted)) for p in extracted.rglob('*') if p.is_file()}
+          expected = set(pfs_entries) | {'sce_sys/keystone'}
+          if found != expected:
+              fail(f'Unexpected/missing PFS files: {found - expected}, {expected - found}')
+          packaged = {name: extracted / name for name in found}
+          packaged.update(special)
+          with (stage / 'package-content.txt').open('w') as report:
+              for name, path in sorted(packaged.items()):
+                  data = path.read_bytes()
+                  report.write(f'{hashlib.sha256(data).hexdigest()}  {len(data):>8}  {name}\n')
+          print(f'::notice title=PKG contents::{", ".join(sorted(packaged))}')
+          print(f'::notice title=PKG round-trip::{len(pfs_entries)} PFS files + icon matched; param.sfo parsed; {len(packaged)} total files')
+          PY
+          cat package-content.txt
+          tail -n 8 package-validation.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: eulolab-ps4-homebrew-pkg-untested
+          path: |
+            out/ps4/stage/*.pkg
+            out/ps4/stage/package.sha256
+            out/ps4/stage/package-validation.txt
+            out/ps4/stage/package-entries.txt
+            out/ps4/stage/package-parameters.txt
+            out/ps4/stage/package-content.txt
+          if-no-files-found: error
+          retention-days: 30
